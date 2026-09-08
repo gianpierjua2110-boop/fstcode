@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+debug.html
+cf_debug.html
+resultado.png
+resultado_royplay.png
+anonymize.py
+debug.py
+debug_cf.py
+.git/
