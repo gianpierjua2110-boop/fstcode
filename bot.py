@@ -462,11 +462,17 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             await page.locator("input[type='password']").fill(p_pass)
             await page.locator("text='Iniciar sesión'").last.click()
             
-            await page.wait_for_selector("text='Bandeja'", timeout=10000)
+            # Esperar a que la página cargue completamente (usamos Buscar código como referencia de que el DOM está listo)
+            await page.wait_for_selector("text='Buscar código'", timeout=15000)
+            await page.wait_for_timeout(2000) # Dar un respiro a JS para inicializar los tabs
+            
+            # Clicar en Bandeja
             await page.locator("text='Bandeja'").first.click()
             
-            await page.wait_for_selector("input[placeholder*='Filtrar']", timeout=10000)
-            await page.locator("input[placeholder*='Filtrar']").first.fill(email)
+            # Buscar el input visible específicamente (por si hay inputs ocultos de otras pestañas)
+            await page.wait_for_selector("input[placeholder='Filtrar por email o asunto...']", state="visible", timeout=10000)
+            await page.locator("input[placeholder='Filtrar por email o asunto...']").fill(email)
+            await page.wait_for_timeout(2000) # Dar tiempo a que filtre
             
             # Polling inteligente en Bandeja
             import time
