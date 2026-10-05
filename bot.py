@@ -227,7 +227,7 @@ def check_15_mins(texto: str) -> tuple[bool, str]:
             diff = codigo_time - now
             
         if diff.total_seconds() > 15 * 60:
-            return False, f"❌ El último código encontrado es del {dia} de {mes_str.capitalize()} a las {hora:02d}:{minuto:02d}.\n\n(DEBUG: Hora actual en el bot = {now.strftime('%H:%M:%S')}).\nTiene más de 15 minutos de antigüedad, por lo tanto **ya no es válido**."
+            return False, "❌ El último código enviado ya venció. Por favor, solicita uno nuevo en la plataforma."
         return True, ""
     except:
         return True, ""
