@@ -400,7 +400,9 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
                         except:
                             pass
 
-            return "❌ Tiempo de espera agotado. No se encontró el código en el correo en el límite de 60 segundos."rgar_cuentas, guardar_cuentas
+            return "❌ Tiempo de espera agotado. No se encontró el código en el correo en el límite de 60 segundos."
+
+from cuentas_manager import cargar_cuentas, guardar_cuentas
 import os
 import asyncio
 import re
