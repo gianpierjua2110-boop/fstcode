@@ -361,68 +361,75 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             # Click Buscar
             await page.locator("button:has-text('Buscar')").click()
             
-            # Esperar respuesta: puede tardar hasta 2 minutos según la captura
-            # Buscaremos que aparezca texto "De:" o algo que indique que cargó el correo
-            try:
-                await page.wait_for_selector("text='De:'", timeout=120000) 
-            except:
-                # Si falla esperamos un poco mas por si acaso
-                await page.wait_for_timeout(5000)
-                
-            await page.wait_for_timeout(2000)
+            # === OPTIMIZACION: POLLING INTELIGENTE ===
+            import time
+            start_time = time.time()
+            found_result = None
             
-            # Extraer el texto del modal
-            modal = page.locator(".modal-content, div[role='dialog']").first
-            if await modal.is_visible():
-                texto = await modal.inner_text()
-            else:
-                texto = await page.locator("body").inner_text()
+            while time.time() - start_time < 60: # Esperar máximo 60 segundos
+                await page.wait_for_timeout(2000)
+                
+                modal = page.locator(".modal-content, div[role='dialog']").first
+                if await modal.is_visible():
+                    texto = await modal.inner_text()
+                else:
+                    texto = await page.locator("body").inner_text()
 
-            import re
-            
-            # Buscar código de 6 dígitos
-            matches_6 = re.findall(r'\b\d\s*\d\s*\d\s*\d\s*\d\s*\d\b', texto)
-            if matches_6:
-                codigo = matches_6[0].replace(" ", "")
-                return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                import re
                 
-            # Buscar código de 4 dígitos (excluyendo años comunes del texto)
-            matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
-            for m in matches_4:
-                codigo = m.replace(" ", "")
-                if codigo not in ("2023", "2024", "2025", "2026", "2027", "2028"):
-                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                # Buscar código de 6 dígitos
+                matches_6 = re.findall(r'\b\d\s*\d\s*\d\s*\d\s*\d\s*\d\b', texto)
+                if matches_6:
+                    codigo = matches_6[0].replace(" ", "")
+                    found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    break
                     
-            # Si la acción fue Actualizar Hogar y Netflix envió un botón/enlace en lugar de un código
-            if accion != 'login':
-                hrefs = []
-                for frame in page.frames:
+                # Buscar código de 4 dígitos (excluyendo años comunes del texto)
+                matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
+                for m in matches_4:
+                    codigo = m.replace(" ", "")
+                    if codigo not in ("2023", "2024", "2025", "2026", "2027", "2028"):
+                        found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                        break
+                
+                if found_result:
+                    break
+                    
+                # Si la acción fue Actualizar Hogar y Netflix envió un botón/enlace en lugar de un código
+                if accion != 'login':
+                    hrefs = []
+                    for frame in page.frames:
+                        try:
+                            frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
+                            hrefs.extend(frame_hrefs)
+                        except:
+                            pass
+                    
                     try:
-                        frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
-                        hrefs.extend(frame_hrefs)
+                        html_content = await page.content()
+                        for frame in page.frames:
+                            try: html_content += await frame.content()
+                            except: pass
+                        
+                        import re as regex_mod
+                        regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
+                        hrefs.extend(regex_urls)
                     except:
                         pass
-                
-                try:
-                    html_content = await page.content()
-                    for frame in page.frames:
-                        try: html_content += await frame.content()
-                        except: pass
+
+                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
                     
-                    import re as regex_mod
-                    # Evitar warning de escape sequence
-                    regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
-                    hrefs.extend(regex_urls)
-                except:
-                    pass
-
-                ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
+                    for href in hrefs:
+                        if 'netflix.com' in href:
+                            if not any(ign in href for ign in ignore_list):
+                                found_result = f"🔗 Aquí tienes el enlace de Netflix:\n\n{href}"
+                                break
                 
-                for href in hrefs:
-                    if 'netflix.com' in href:
-                        if not any(ign in href for ign in ignore_list):
-                            return f"🔗 Aquí tienes el enlace de Netflix:\n\n{href}"
-
+                if found_result:
+                    break
+                    
+            if found_result:
+                return found_result
             # Fallback a captura SOLO si el texto/enlace no se pudo extraer
             path = os.path.join(os.getcwd(), "resultado_sdnetpanel.png")
             if await modal.is_visible():
