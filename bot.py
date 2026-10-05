@@ -513,12 +513,15 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     # Verificamos si es reciente
                     tiempos_min = re.findall(r'hace\s+(\d+)\s+min', email_text)
                     es_reciente = False
+                    import re as rx
                     if tiempos_min:
                         if int(tiempos_min[0]) <= 15:
                             es_reciente = True
                     elif "justo ahora" in email_text or "segundos" in email_text:
                         es_reciente = True
                     elif "hace 1 min" in email_text or "hace 2 min" in email_text:
+                        es_reciente = True
+                    elif rx.search(r'hace\s+\d+s', email_text):
                         es_reciente = True
                     
                     if not es_reciente:
