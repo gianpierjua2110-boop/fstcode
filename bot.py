@@ -580,6 +580,99 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
         finally:
             await browser.close()
 
+async def get_code_royplayasync def get_code_royplay(email: str, plataforma: str) -> str:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            await page.goto("https://reseller.royplay.com")
+            
+            # Esperamos que cargue el titulo para asegurarnos de que la página renderizó
+            await page.wait_for_selector("text='Gestión de Códigos'", timeout=15000)
+            
+            # Buscamos exclusivamente los inputs que NO sean ocultos (hidden)
+            visible_inputs = page.locator("input:not([type='hidden'])")
+            count = await visible_inputs.count()
+            if count >= 2:
+                await visible_inputs.nth(0).fill(ROYPLAY_CODE)
+                await visible_inputs.nth(1).fill(email)
+            else:
+                return "❌ No se encontraron los campos visibles en el sistema."
+                
+            if plataforma == 'disney':
+                await page.locator("select#tipo_codigo").select_option("disney")
+            else:
+                await page.locator("select#tipo_codigo").select_option("amazon_code")
+                
+            await page.locator("button#searchBtn").click(no_wait_after=True)
+            
+            try:
+                # Esperar a que la lista de emails se pueble
+                await page.wait_for_selector("#emailList li", timeout=20000)
+            except:
+                return "❌ No se encontraron códigos recientes para este correo en la base de datos."
+            
+            await page.wait_for_timeout(1000)
+            
+            try:
+                # Clic exacto y seguro en el primer correo
+                await page.locator("#emailList li").first.click()
+            except Exception as e:
+                print("Error click:", e, flush=True)
+                
+            try:
+                # Esperar a que el modal se abra
+                await page.wait_for_selector("#emailModal.open", timeout=5000)
+            except:
+                return "❌ No se pudo abrir el mensaje con el código."
+            
+            modal = page.locator("#emailModal")
+            try:
+                # Extraer la fecha del HTML nativo del modal
+                fecha_text = await page.locator("p:has-text('Fecha')").locator("xpath=following-sibling::p").first.inner_text()
+                is_valid, msg = check_15_mins(fecha_text)
+                if not is_valid:
+                    return msg
+            except Exception as e:
+                print("Error verificando fecha:", e, flush=True)
+                
+            texto_email = ""
+            try:
+                # Extraer el cuerpo del correo desde el div asignado
+                div_contenido = page.locator("p:has-text('Contenido')").locator("xpath=following-sibling::div").first
+                if await div_contenido.count() > 0:
+                    texto_email = await div_contenido.inner_text()
+                    await div_contenido.evaluate("el => el.scrollTop = el.scrollHeight")
+                else:
+                    texto_email = await modal.inner_text()
+                    
+                await page.wait_for_timeout(1000) 
+                
+                import re
+                match = re.search(r'\b(\d{6})\b', texto_email)
+                if match:
+                    codigo = match.group(1)
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    
+            except Exception as e:
+                print("Error extrayendo texto:", e, flush=True)
+            
+            if await modal.count() == 0:
+                modal = page
+                
+            path = os.path.join(os.getcwd(), "resultado_royplay.png")
+            await modal.screenshot(path=path)
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
+            
+        except Exception as e:
+            print(f"Error royplay: {e}", flush=True)
+            return f"Hubo un error de conexión con el sistema. Detalle para depuración:\n\n{str(e)}"
+        finally:
+            await browser.close()
+
+
+
+
 async def get_code_cpanel_imap(email_cuenta: str, password: str, servidor: str) -> str:
     try:
         return await asyncio.wait_for(asyncio.to_thread(_get_code_cpanel_imap_sync, email_cuenta, password, servidor), timeout=25.0)
