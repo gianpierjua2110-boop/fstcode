@@ -572,7 +572,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                         if 'update-primary-location' in href or 'travel' in href or 'account' in href:
                             return f"🏠 Aquí tienes el enlace:\n\n{href}"
                             
-            return "❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos, o la cuenta no tiene mensajes recientes."
+            return f"❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos. DEBUG Bandeja (primeros 200 chars): {texto_bandeja[:200]}"
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
