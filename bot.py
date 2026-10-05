@@ -996,6 +996,59 @@ Nota: Los correos que no agregues con estos comandos irán por defecto a CodeFli
 """
     await update.message.reply_text(texto)
 
+import threading
+import asyncio
+from aiohttp import web
+
+def run_web_server():
+    async def handle_scrape(request):
+        try:
+            data = await request.json()
+            email = data.get("email", "").lower()
+            plataforma = data.get("plataforma", "").lower()
+            accion = data.get("accion", "")
+            
+            print(f"[API Web] Solicitud recibida: {email} | {plataforma} | {accion}")
+            
+            laravel_data = fetch_laravel_credentials(email)
+            resultado = "Error: no se encontró configuración en Laravel o fallo en las credenciales."
+            
+            if laravel_data and laravel_data.get('success'):
+                scraping = laravel_data.get('scraping', {})
+                modo = scraping.get('modo')
+                l_user = scraping.get('user')
+                l_pass = scraping.get('pass')
+                l_url = scraping.get('url')
+                
+                if modo == 'panel_sdnet':
+                    resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
+                elif modo == 'panel_codeflix':
+                    resultado = await get_code_codeflix(email, accion, l_user, l_pass)
+                elif modo == 'imap' and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
+                    resultado = await get_code_gmail(email, l_pass)
+                elif modo == 'imap':
+                    l_server = l_url if l_url else f"mail.{email.split('@')[1]}"
+                    resultado = await get_code_cpanel_imap(email, l_pass, l_server)
+                else:
+                    resultado = await get_code_royplay(email, plataforma)
+            
+            return web.json_response({"success": True, "resultado": resultado})
+        except Exception as e:
+            print(f"[API Web] Error procesando la petición: {e}")
+            return web.json_response({"success": False, "error": str(e)}, status=500)
+
+    async def init_app():
+        app = web.Application()
+        app.router.add_post('/api/scrape', handle_scrape)
+        return app
+
+    # Creamos un nuevo bucle de eventos para el hilo del servidor web
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app = loop.run_until_complete(init_app())
+    print("[API Web] Servidor web interno iniciado en puerto 8000...")
+    web.run_app(app, host='0.0.0.0', port=8000, loop=loop)
+
 def main():
     app = Application.builder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
     app.add_handler(CommandHandler("mi_id", mi_id))
@@ -1023,6 +1076,7 @@ def main():
     )
     app.add_handler(conv_handler)
     print("Bot con fix de inputs ocultos iniciado...", flush=True)
+    threading.Thread(target=run_web_server, daemon=True).start()
     app.run_polling()
 
 if __name__ == "__main__":
