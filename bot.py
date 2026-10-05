@@ -436,7 +436,7 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
                 await modal.screenshot(path=path)
             else:
                 await page.screenshot(path=path)
-            return f"SCREENSHOT:{path}"
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
             
         except Exception as e:
             print(f"Error SDNetPanel: {e}", flush=True)
@@ -488,9 +488,9 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     if es_reciente:
                         return f"🔑 Aquí tienes el código de 6 dígitos extraído de la Bandeja:\n\n`{matches[0]}`"
                     else:
-                        return f"❌ Se encontró el código `{matches[0]}` en la bandeja, pero tiene MÁS de 15 minutos y ya caducó.\n\nRevisa la captura de la bandeja adjunta:\nSCREENSHOT:{path}"
+                        return f"❌ Se encontró el código `{matches[0]}` en la bandeja, pero tiene MÁS de 15 minutos y ya caducó."
                 else:
-                    return f"❌ No se encontró ningún código de 6 dígitos reciente en la Bandeja para este correo.\n\nSCREENSHOT:{path}"
+                    return f"❌ No se encontró ningún código de 6 dígitos reciente en la Bandeja para este correo."
 
             # Lógica normal para el resto de acciones (4 dígitos, viaje, hogar)
             html_content = (await page.content()).lower()
@@ -510,7 +510,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                 
             try:
                 # Esperar a que aparezca la caja de resultados (CodeFlix hace auto-polling, damos 15s)
-                await page.wait_for_selector("#search-result .code-box", timeout=15000)
+                await page.wait_for_selector("#search-result .code-box", timeout=45000)
                 
                 # Validar la fecha (15 mins)
                 meta_text = await page.locator("#search-result .code-meta").first.inner_text()
@@ -537,7 +537,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             # Si no se pudo extraer texto exacto, tomar captura
             screenshot_path = os.path.join(os.getcwd(), "resultado.png")
             await page.screenshot(path=screenshot_path)
-            return f"SCREENSHOT:{screenshot_path}"
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
@@ -627,7 +627,7 @@ async def get_code_royplay(email: str, plataforma: str) -> str:
                 
             path = os.path.join(os.getcwd(), "resultado_royplay.png")
             await modal.screenshot(path=path)
-            return f"SCREENSHOT:{path}"
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
             
         except Exception as e:
             print(f"Error royplay: {e}", flush=True)
