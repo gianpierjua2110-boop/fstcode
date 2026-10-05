@@ -205,7 +205,9 @@ async def mi_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Tu ID de Telegram es: {update.effective_user.id}")
 
 def check_15_mins(texto: str) -> tuple[bool, str]:
+    from datetime import datetime, timezone, timedelta
     meses = {'enero':1, 'febrero':2, 'marzo':3, 'abril':4, 'mayo':5, 'junio':6, 'julio':7, 'agosto':8, 'septiembre':9, 'octubre':10, 'noviembre':11, 'diciembre':12}
+    import re
     match = re.search(r'(\d{1,2})\s+de\s+([a-z]+)\s+de\s+(\d{4}),\s+(\d{1,2}):(\d{2})', texto.lower())
     if not match:
         return True, "" 
@@ -219,89 +221,24 @@ def check_15_mins(texto: str) -> tuple[bool, str]:
     
     try:
         codigo_time = datetime(anio, mes, dia, hora, minuto)
-        now = datetime.now()
+        
+        # Obtener la hora actual en UTC y convertirla manualmente a UTC-5 (Perú/Lima)
+        now_utc = datetime.now(timezone.utc)
+        now = now_utc.astimezone(timezone(timedelta(hours=-5))).replace(tzinfo=None)
+        
         diff = now - codigo_time
         if diff.total_seconds() < 0:
             diff = codigo_time - now
             
         if diff.total_seconds() > 15 * 60:
-            return False, f"❌ El último código encontrado es del {dia} de {mes_str.capitalize()} a las {hora:02d}:{minuto:02d}.\n\n(DEBUG: Hora actual en el bot = {now.strftime('%H:%M:%S')}).\nTiene más de 15 minutos de antigüedad, por lo tanto **ya no es válido**."
+            return False, f"❌ El último código encontrado es del {dia} de {mes_str.capitalize()} a las {hora:02d}:{minuto:02d}.
+
+(DEBUG: Hora actual en el bot = {now.strftime('%H:%M:%S')} Lima).
+Tiene más de 15 minutos de antigüedad, por lo tanto **ya no es válido**."
         return True, ""
-    except:
+    except Exception as e:
+        print("Error en check_15_mins:", e)
         return True, ""
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_allowed(update.effective_user.id):
-        msg = "⛔ No tienes autorización para usar este bot."
-        if update.message:
-            await update.message.reply_text(msg)
-        else:
-            await update.callback_query.edit_message_text(msg)
-        return ConversationHandler.END
-        
-    keyboard = [
-        [InlineKeyboardButton("Netflix", callback_data="plat_netflix")],
-        [InlineKeyboardButton("Disney", callback_data="plat_disney")],
-        [InlineKeyboardButton("Prime", callback_data="plat_prime")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.message:
-        await update.message.reply_text("¡Hola! Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
-    else:
-        await update.callback_query.edit_message_text("Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
-    return CHOOSING_PLATFORM
-
-async def platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    plataforma = query.data.split('_')[1]
-    context.user_data['plataforma'] = plataforma
-
-    if plataforma == 'netflix':
-
-        keyboard = []
-        # Disponible para todos los usuarios autorizados
-        keyboard.append([InlineKeyboardButton("Código de inicio de sesión", callback_data="act_login")])
-            
-        keyboard.extend([
-            [InlineKeyboardButton("Estoy de viaje", callback_data="act_travel")],
-            [InlineKeyboardButton("Actualizar hogar", callback_data="act_home")],
-            [InlineKeyboardButton("Código de 6 dígitos", callback_data="act_6digits")],
-            [InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]
-        ])
-        await query.edit_message_text(
-            text=f"Has seleccionado Netflix. Ahora, elige el tipo de código:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return CHOOSING_ACTION
-    else:
-        # Disney y Prime van directo a pedir correo
-        context.user_data['accion'] = 'unique'
-        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]]
-        await query.edit_message_text(
-            text=f"Has seleccionado {plataforma.capitalize()}.\n\nPor favor, envíame el correo de la cuenta:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return TYPING_EMAIL
-
-async def action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == "back_to_start":
-        return await start(update, context)
-        
-    accion = query.data.split('_')[1]
-    
-    # El acceso de inicio de sesión ahora es público para la lista blanca
-        
-    context.user_data['accion'] = accion
-    
-    nombres = {'login': 'Código de inicio de sesión', 'travel': 'Estoy de viaje', 'home': 'Actualizar hogar', 'unique': 'Código único', '6digits': 'Código de 6 dígitos'}
-    nombre = nombres.get(accion, accion)
-    plat = context.user_data.get('plataforma').capitalize()
-    
-    await query.edit_message_text(text=f"Vas a solicitar: {nombre} para {plat}.\n\nPor favor, envíame el correo de la cuenta:")
-    return TYPING_EMAIL
 
 async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = None, panel_pass_param: str = None) -> str:
     from playwright.async_api import async_playwright
