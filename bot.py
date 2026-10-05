@@ -1001,14 +1001,12 @@ import asyncio
 from aiohttp import web
 
 def run_web_server():
-    async def handle_scrape(request):
+    async def background_scrape(data):
         try:
-            data = await request.json()
             email = data.get("email", "").lower()
             plataforma = data.get("plataforma", "").lower()
             accion = data.get("accion", "")
-            
-            print(f"[API Web] Solicitud recibida: {email} | {plataforma} | {accion}")
+            job_id = data.get("job_id", "")
             
             laravel_data = fetch_laravel_credentials(email)
             resultado = "Error: no se encontró configuración en Laravel o fallo en las credenciales."
@@ -1032,9 +1030,32 @@ def run_web_server():
                 else:
                     resultado = await get_code_royplay(email, plataforma)
             
-            return web.json_response({"success": True, "resultado": resultado})
+            # Enviar resultado de vuelta a Laravel
+            callback_url = data.get("callback_url", "https://darkviolet-rat-754475.hostingersite.com/api/bot/callback")
+            try:
+                requests.post(callback_url, json={"job_id": job_id, "resultado": resultado}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=15)
+                print(f"[API Web] Resultado enviado a Laravel para job {job_id}")
+            except Exception as ex:
+                print(f"[API Web] Error enviando callback a Laravel: {ex}")
+
         except Exception as e:
-            print(f"[API Web] Error procesando la petición: {e}")
+            print(f"[API Web] Error en tarea de fondo: {e}")
+            try:
+                requests.post(data.get("callback_url"), json={"job_id": data.get("job_id"), "resultado": f"Error interno: {str(e)}"}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=10)
+            except:
+                pass
+
+    async def handle_scrape(request):
+        try:
+            data = await request.json()
+            print(f"[API Web] Solicitud recibida: {data.get('email')} | {data.get('plataforma')} | {data.get('accion')}")
+            
+            # Lanzar tarea en segundo plano sin bloquear la respuesta HTTP
+            asyncio.create_task(background_scrape(data))
+            
+            return web.json_response({"success": True, "message": "Extracción iniciada en segundo plano..."})
+        except Exception as e:
+            print(f"[API Web] Error procesando la petición inicial: {e}")
             return web.json_response({"success": False, "error": str(e)}, status=500)
 
     async def init_app():
