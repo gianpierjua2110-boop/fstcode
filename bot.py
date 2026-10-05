@@ -580,7 +580,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
         finally:
             await browser.close()
 
-async def get_code_royplayasync def get_code_royplay(email: str, plataforma: str) -> str:
+async def get_code_royplay(email: str, plataforma: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
