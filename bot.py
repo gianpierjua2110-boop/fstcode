@@ -445,6 +445,9 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             await browser.close()
 
 async def get_code_codeflix(email: str, accion: str, panel_user_param: str = None, panel_pass_param: str = None) -> str:
+    from playwright.async_api import async_playwright
+    import os
+    import re
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
@@ -452,190 +455,97 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             await page.goto("https://codeflix.cc")
             await page.locator("text='Iniciar sesión'").first.click()
             await page.wait_for_selector("input[type='text']", timeout=5000)
+            
             p_user = panel_user_param if panel_user_param else WEB_USER
             p_pass = panel_pass_param if panel_pass_param else WEB_PASS
             await page.locator("input[type='text']").fill(p_user)
             await page.locator("input[type='password']").fill(p_pass)
             await page.locator("text='Iniciar sesión'").last.click()
             
-            await page.wait_for_selector("text='Buscar código'", timeout=10000)
-            await page.wait_for_timeout(2000)
+            await page.wait_for_selector("text='Bandeja'", timeout=10000)
+            await page.locator("text='Bandeja'").first.click()
             
-            if accion == '6digits':
-                # Lógica especial: Ir a la Bandeja
-                await page.locator("text='Bandeja'").first.click()
-                await page.wait_for_selector("input[placeholder*='Filtrar']", timeout=10000)
-                await page.locator("input[placeholder*='Filtrar']").first.fill(email)
-                await page.wait_for_timeout(4000) # Dar tiempo a que filtre
+            await page.wait_for_selector("input[placeholder*='Filtrar']", timeout=10000)
+            await page.locator("input[placeholder*='Filtrar']").first.fill(email)
+            
+            # Polling inteligente en Bandeja
+            import time
+            start_time = time.time()
+            
+            while time.time() - start_time < 45:
+                await page.wait_for_timeout(2000)
                 
+                # Extraemos todo el texto
                 texto_bandeja = await page.locator("body").inner_text()
                 
-                # Tomamos captura por seguridad
-                path = os.path.join(os.getcwd(), "resultado_codeflix_bandeja.png")
-                await page.screenshot(path=path)
+                # También extraemos todos los enlaces
+                hrefs = []
+                try:
+                    for frame in page.frames:
+                        frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
+                        if frame_hrefs: hrefs.extend(frame_hrefs)
+                except:
+                    pass
+                try:
+                    html_content = await page.content()
+                    for frame in page.frames:
+                        try: html_content += await frame.content()
+                        except: pass
+                    import re as regex_mod
+                    regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
+                    hrefs.extend(regex_urls)
+                except:
+                    pass
                 
-                import re
-                matches = re.findall(r'\b(\d{6})\b', texto_bandeja)
-                if matches:
-                    tiempos_min = re.findall(r'hace\s+(\d+)\s+min', texto_bandeja.lower())
-                    es_reciente = False
-                    if tiempos_min:
-                        if int(tiempos_min[0]) <= 15:
-                            es_reciente = True
-                    elif "justo ahora" in texto_bandeja.lower() or "segundos" in texto_bandeja.lower():
+                # Validamos si los resultados cargaron buscando el email
+                if email.lower() not in texto_bandeja.lower():
+                    continue # Aún no carga o no hay resultados
+                
+                # Verificamos si es reciente
+                tiempos_min = re.findall(r'hace\s+(\d+)\s+min', texto_bandeja.lower())
+                es_reciente = False
+                if tiempos_min:
+                    if int(tiempos_min[0]) <= 15:
                         es_reciente = True
-                        
-                    if es_reciente:
-                        return f"🔑 Aquí tienes el código de 6 dígitos extraído de la Bandeja:\n\n`{matches[0]}`"
-                    else:
-                        return f"❌ Se encontró el código `{matches[0]}` en la bandeja, pero tiene MÁS de 15 minutos y ya caducó."
-                else:
-                    return f"❌ No se encontró ningún código de 6 dígitos reciente en la Bandeja para este correo."
-
-            # Lógica normal para el resto de acciones (4 dígitos, viaje, hogar)
-            html_content = (await page.content()).lower()
-            
-            if email.lower() not in html_content:
-                return f"❌ El correo {email} NO se encuentra en la lista de cuentas autorizadas en nuestra base de datos."
-
-            await page.locator("text='Buscar código'").first.click()
-            await page.locator("#search-email").fill(email)
-            
-            if accion == 'login':
-                await page.locator("button:has-text('Código de inicio')").first.click()
-            elif accion == 'travel':
-                await page.locator("button:has-text('Estoy de viaje')").first.click()
-            elif accion == 'home':
-                await page.locator("button:has-text('Actualizar hogar')").first.click()
+                elif "justo ahora" in texto_bandeja.lower() or "segundos" in texto_bandeja.lower():
+                    es_reciente = True
+                elif "hace 1 min" in texto_bandeja.lower() or "hace 2 min" in texto_bandeja.lower():
+                    es_reciente = True
                 
-            try:
-                # Esperar a que aparezca la caja de resultados (CodeFlix hace auto-polling, damos 15s)
-                await page.wait_for_selector("#search-result .code-box", timeout=45000)
+                if not es_reciente:
+                    # Esperamos en el loop por si llega uno nuevo, no nos rendimos inmediatamente
+                    continue
                 
-                # Validar la fecha (15 mins)
-                meta_text = await page.locator("#search-result .code-meta").first.inner_text()
-                import re
-                from datetime import datetime
-                match_date = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})', meta_text)
-                if match_date:
-                    day, month, year, hour, minute, second = map(int, match_date.groups())
-                    dt = datetime(year, month, day, hour, minute, second)
-                    diff = (datetime.now() - dt).total_seconds() / 60
-                    if diff > 15:
-                        return "❌ El último código encontrado tiene más de 15 minutos de antigüedad, por lo tanto ya no es válido."
-                
-                if accion == 'login':
-                    code_val = await page.locator("#search-result .code-value").first.inner_text()
-                    return f"🔑 Aquí tienes el código extraído:\n\n`{code_val}`"
-                else:
-                    link_val = await page.locator("#search-result a").first.get_attribute("href")
-                    return f"🔗 Aquí tienes el enlace extraído:\n\n{link_val}"
+                # Dependiendo de la accion buscamos la respuesta
+                if accion == '6digits':
+                    matches = re.findall(r'\b(\d{6})\b', texto_bandeja)
+                    if matches:
+                        return f"🔑 Aquí tienes el código de 6 dígitos:\n\n`{matches[0]}`"
+                elif accion == 'login':
+                    matches = re.findall(r'\b(\d{4})\b', texto_bandeja)
+                    # Excluir años
+                    matches = [m for m in matches if m not in ("2023", "2024", "2025", "2026", "2027", "2028")]
+                    if matches:
+                        return f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{matches[0]}`"
+                elif accion in ('travel', 'home'):
+                    # Buscar el enlace de Netflix
+                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
+                    for href in hrefs:
+                        if 'netflix.com' in href and not any(ign in href for ign in ignore_list):
+                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
                     
-            except Exception as e:
-                print(f"Error extrayendo de CodeFlix: {e}", flush=True)
-                
-            # Si no se pudo extraer texto exacto, tomar captura
-            screenshot_path = os.path.join(os.getcwd(), "resultado.png")
-            await page.screenshot(path=screenshot_path)
-            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
+                    # A veces el enlace de viaje/hogar no dice netflix.com explícitamente en href o el href está en un botoncito
+                    for href in hrefs:
+                        if 'update-primary-location' in href or 'travel' in href or 'account' in href:
+                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                            
+            return "❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos, o la cuenta no tiene mensajes recientes."
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
-            return f"Hubo un error en el sistema. Detalle para depuración:\n\n{str(e)}"
+            return "❌ Hubo un error de conexión con la plataforma CodeFlix."
         finally:
             await browser.close()
-
-async def get_code_royplay(email: str, plataforma: str) -> str:
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        try:
-            await page.goto("https://reseller.royplay.com")
-            
-            # Esperamos que cargue el titulo para asegurarnos de que la página renderizó
-            await page.wait_for_selector("text='Gestión de Códigos'", timeout=15000)
-            
-            # Buscamos exclusivamente los inputs que NO sean ocultos (hidden)
-            visible_inputs = page.locator("input:not([type='hidden'])")
-            count = await visible_inputs.count()
-            if count >= 2:
-                await visible_inputs.nth(0).fill(ROYPLAY_CODE)
-                await visible_inputs.nth(1).fill(email)
-            else:
-                return "❌ No se encontraron los campos visibles en el sistema."
-                
-            if plataforma == 'disney':
-                await page.locator("select#tipo_codigo").select_option("disney")
-            else:
-                await page.locator("select#tipo_codigo").select_option("amazon_code")
-                
-            await page.locator("button#searchBtn").click(no_wait_after=True)
-            
-            try:
-                # Esperar a que la lista de emails se pueble
-                await page.wait_for_selector("#emailList li", timeout=20000)
-            except:
-                return "❌ No se encontraron códigos recientes para este correo en la base de datos."
-            
-            await page.wait_for_timeout(1000)
-            
-            try:
-                # Clic exacto y seguro en el primer correo
-                await page.locator("#emailList li").first.click()
-            except Exception as e:
-                print("Error click:", e, flush=True)
-                
-            try:
-                # Esperar a que el modal se abra
-                await page.wait_for_selector("#emailModal.open", timeout=5000)
-            except:
-                return "❌ No se pudo abrir el mensaje con el código."
-            
-            modal = page.locator("#emailModal")
-            try:
-                # Extraer la fecha del HTML nativo del modal
-                fecha_text = await page.locator("p:has-text('Fecha')").locator("xpath=following-sibling::p").first.inner_text()
-                is_valid, msg = check_15_mins(fecha_text)
-                if not is_valid:
-                    return msg
-            except Exception as e:
-                print("Error verificando fecha:", e, flush=True)
-                
-            texto_email = ""
-            try:
-                # Extraer el cuerpo del correo desde el div asignado
-                div_contenido = page.locator("p:has-text('Contenido')").locator("xpath=following-sibling::div").first
-                if await div_contenido.count() > 0:
-                    texto_email = await div_contenido.inner_text()
-                    await div_contenido.evaluate("el => el.scrollTop = el.scrollHeight")
-                else:
-                    texto_email = await modal.inner_text()
-                    
-                await page.wait_for_timeout(1000) 
-                
-                import re
-                match = re.search(r'\b(\d{6})\b', texto_email)
-                if match:
-                    codigo = match.group(1)
-                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
-                    
-            except Exception as e:
-                print("Error extrayendo texto:", e, flush=True)
-            
-            if await modal.count() == 0:
-                modal = page
-                
-            path = os.path.join(os.getcwd(), "resultado_royplay.png")
-            await modal.screenshot(path=path)
-            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
-            
-        except Exception as e:
-            print(f"Error royplay: {e}", flush=True)
-            return f"Hubo un error de conexión con el sistema. Detalle para depuración:\n\n{str(e)}"
-        finally:
-            await browser.close()
-
-
 
 async def get_code_cpanel_imap(email_cuenta: str, password: str, servidor: str) -> str:
     try:
