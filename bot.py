@@ -452,8 +452,10 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             await page.goto("https://codeflix.cc")
             await page.locator("text='Iniciar sesión'").first.click()
             await page.wait_for_selector("input[type='text']", timeout=5000)
-            await page.locator("input[type='text']").fill(WEB_USER)
-            await page.locator("input[type='password']").fill(WEB_PASS)
+            p_user = panel_user_param if panel_user_param else WEB_USER
+            p_pass = panel_pass_param if panel_pass_param else WEB_PASS
+            await page.locator("input[type='text']").fill(p_user)
+            await page.locator("input[type='password']").fill(p_pass)
             await page.locator("text='Iniciar sesión'").last.click()
             
             await page.wait_for_selector("text='Buscar código'", timeout=10000)
