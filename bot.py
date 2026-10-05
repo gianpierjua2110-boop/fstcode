@@ -361,6 +361,408 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             # Click Buscar
             await page.locator("button:has-text('Buscar')").click()
             
+            # === OPTIMIZACION: POLLING INTELIGENTE ===
+            import time
+            import re
+            start_time = time.time()
+            
+            while time.time() - start_time < 60: # Esperar máximo 60 segundos
+                await page.wait_for_timeout(2000)
+                
+                modal = page.locator(".modal-content, div[role='dialog']").first
+                if await modal.is_visible():
+                    texto = await modal.inner_text()
+                else:
+                    texto = await page.locator("body").inner_text()
+
+                # Buscar código de 6 dígitos
+                matches_6 = re.findall(r'\b\d\s*\d\s*\d\s*\d\s*\d\s*\d\b', texto)
+                if matches_6:
+                    codigo = matches_6[0].replace(" ", "")
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    
+                # Buscar código de 4 dígitos (excluyendo años)
+                matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
+                for m in matches_4:
+                    codigo = m.replace(" ", "")
+                    if codigo not in ("2023", "2024", "2025", "2026", "2027", "2028"):
+                        return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                        
+                # Buscar Enlace (Actualizar Hogar)
+                if accion != 'login':
+                    for frame in page.frames:
+                        try:
+                            links = await frame.locator("a").element_handles()
+                            for link in links:
+                                href = await link.get_attribute("href")
+                                if href and "update-primary-location" in href:
+                                    return f"🏠 Aquí tienes el enlace para Actualizar el Hogar:\n\n{href}"
+                        except:
+                            pass
+
+            return "❌ Tiempo de espera agotado. No se encontró el código en el correo en el límite de 60 segundos."rgar_cuentas, guardar_cuentas
+import os
+import asyncio
+import re
+from datetime import datetime
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import requests
+
+LARAVEL_API_URL = "https://darkviolet-rat-754475.hostingersite.com/api/bot/credenciales"
+BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "fstflix_super_secret_bot_token_2026")
+
+def fetch_laravel_credentials(email: str):
+    try:
+        response = requests.post(
+            LARAVEL_API_URL, 
+            json={"correo": email},
+            headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Error llamando a Laravel API: {e}")
+    return None
+
+from playwright.async_api import async_playwright
+
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TOKEN_AQUI")
+WEB_USER = os.getenv("WEB_USER", "Gianpierre")
+WEB_PASS = os.getenv("WEB_PASS", "gianpier21")
+ROYPLAY_CODE = "GIANPI4869"
+
+CHOOSING_PLATFORM, CHOOSING_ACTION, TYPING_EMAIL = range(3)
+
+
+def is_allowed(user_id: int) -> bool:
+    try:
+        with open("usuarios_permitidos.txt", "r") as f:
+            allowed = [int(line.strip()) for line in f if line.strip().isdigit()]
+    except FileNotFoundError:
+        allowed = [5190513736]
+    return user_id in allowed
+
+
+
+async def quitar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != 5190513736:
+        await update.message.reply_text("⛔ No tienes permisos.")
+        return
+        
+    if not context.args:
+        await update.message.reply_text("⚠️ Uso correcto: /quitar <ID_DE_TELEGRAM>")
+        return
+        
+    quitar_id = context.args[0]
+    
+    if quitar_id == "5190513736":
+        await update.message.reply_text("⚠️ No puedes eliminar tu propio ID de administrador.")
+        return
+        
+    try:
+        with open("usuarios_permitidos.txt", "r") as f:
+            existentes = [line.strip() for line in f if line.strip().isdigit()]
+            
+        if quitar_id not in existentes:
+            await update.message.reply_text("⚠️ Ese ID no está en la lista blanca.")
+            return
+            
+        existentes.remove(quitar_id)
+        
+        with open("usuarios_permitidos.txt", "w") as f:
+            for uid in existentes:
+                f.write(f"{uid}\n")
+                
+        await update.message.reply_text(f"✅ El ID {quitar_id} fue eliminado. Ya no tiene acceso al bot.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al quitar el ID: {e}")
+
+async def lista_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != 5190513736:
+        await update.message.reply_text("⛔ No tienes permisos.")
+        return
+        
+    try:
+        with open("usuarios_permitidos.txt", "r") as f:
+            existentes = [line.strip() for line in f if line.strip().isdigit()]
+            
+        msg = "📋 *Usuarios Autorizados:*\n\n"
+        for i, uid in enumerate(existentes, 1):
+            admin_tag = " (Admin)" if uid == "5190513736" else ""
+            msg += f"{i}. `{uid}`{admin_tag}\n"
+            
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al leer la lista: {e}")
+
+
+async def ver_historial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != 5190513736:
+        await update.message.reply_text("⛔ No tienes permisos.")
+        return
+
+    try:
+        import os
+        if not os.path.exists("historial_uso.txt"):
+            await update.message.reply_text("📭 Aún no hay registros de uso.")
+            return
+
+        with open("historial_uso.txt", "r", encoding="utf-8") as f:
+            lineas = f.readlines()
+
+        if not lineas:
+            await update.message.reply_text("📭 El historial está vacío.")
+            return
+
+        # Tomar las últimas 15 peticiones para no saturar el mensaje
+        ultimas = lineas[-15:]
+        msg = "📖 *Últimas 15 peticiones (Más recientes al final):*\n\n"
+        
+        # Usamos un bloque de código para que quede perfectamente alineado y limpio
+        msg += "```text\n"
+        for linea in ultimas:
+            msg += f"{linea.strip()}\n"
+        msg += "```"
+
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al leer el historial: {e}")
+
+async def stats_uso(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != 5190513736:
+        await update.message.reply_text("⛔ No tienes permisos.")
+        return
+        
+    try:
+        from datetime import datetime
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        total_peticiones = 0
+        peticiones_hoy = 0
+        
+        plataformas = {'netflix': 0, 'disney': 0, 'prime': 0}
+        
+        if os.path.exists("historial_uso.txt"):
+            with open("historial_uso.txt", "r", encoding="utf-8") as f:
+                lineas = f.readlines()
+                total_peticiones = len(lineas)
+                for linea in lineas:
+                    if hoy in linea:
+                        peticiones_hoy += 1
+                    
+                    if "netflix" in linea.lower(): plataformas['netflix'] += 1
+                    elif "disney" in linea.lower(): plataformas['disney'] += 1
+                    elif "prime" in linea.lower(): plataformas['prime'] += 1
+                        
+        msg = f"📊 *Estadísticas del Bot*\n\n"
+        msg += f"📅 Peticiones hoy: *{peticiones_hoy}*\n"
+        msg += f"📈 Total peticiones (Histórico): *{total_peticiones}*\n\n"
+        msg += f"*Por plataforma (Histórico):*\n"
+        msg += f"🔴 Netflix: {plataformas['netflix']}\n"
+        msg += f"🔵 Disney: {plataformas['disney']}\n"
+        msg += f"📦 Prime: {plataformas['prime']}\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al leer las estadísticas: {e}")
+
+async def agregar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Solo tú (el admin principal)
+    if update.effective_user.id != 5190513736:
+        await update.message.reply_text("⛔ No tienes permisos de administrador para usar este comando.")
+        return
+        
+    if not context.args:
+        await update.message.reply_text("⚠️ Uso correcto: /agregar <ID_DE_TELEGRAM>")
+        return
+        
+    nuevo_id = context.args[0]
+    
+    if not nuevo_id.isdigit():
+        await update.message.reply_text("⚠️ El ID debe ser un número.")
+        return
+        
+    # Verificar si ya existe
+    try:
+        with open("usuarios_permitidos.txt", "r") as f:
+            existentes = [line.strip() for line in f if line.strip().isdigit()]
+        if nuevo_id in existentes:
+            await update.message.reply_text("⚠️ Ese ID ya está en la lista blanca.")
+            return
+    except:
+        pass
+        
+    # Agregar
+    try:
+        with open("usuarios_permitidos.txt", "a") as f:
+            f.write(f"\n{nuevo_id}\n")
+        await update.message.reply_text(f"✅ ¡Éxito! El ID {nuevo_id} fue agregado a la lista blanca. Esa persona ya puede usar el bot de inmediato.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al guardar el ID: {e}")
+
+async def mi_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f"Tu ID de Telegram es: {update.effective_user.id}")
+
+def check_15_mins(texto: str) -> tuple[bool, str]:
+    meses = {'enero':1, 'febrero':2, 'marzo':3, 'abril':4, 'mayo':5, 'junio':6, 'julio':7, 'agosto':8, 'septiembre':9, 'octubre':10, 'noviembre':11, 'diciembre':12}
+    match = re.search(r'(\d{1,2})\s+de\s+([a-z]+)\s+de\s+(\d{4}),\s+(\d{1,2}):(\d{2})', texto.lower())
+    if not match:
+        return True, "" 
+        
+    dia = int(match.group(1))
+    mes_str = match.group(2)
+    anio = int(match.group(3))
+    hora = int(match.group(4))
+    minuto = int(match.group(5))
+    mes = meses.get(mes_str, 1)
+    
+    try:
+        codigo_time = datetime(anio, mes, dia, hora, minuto)
+        now = datetime.now()
+        diff = now - codigo_time
+        if diff.total_seconds() < 0:
+            diff = codigo_time - now
+            
+        if diff.total_seconds() > 15 * 60:
+            return False, f"❌ El último código encontrado es del {dia} de {mes_str.capitalize()} a las {hora:02d}:{minuto:02d}.\n\nTiene más de 15 minutos de antigüedad, por lo tanto **ya no es válido**."
+        return True, ""
+    except:
+        return True, ""
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_allowed(update.effective_user.id):
+        msg = "⛔ No tienes autorización para usar este bot."
+        if update.message:
+            await update.message.reply_text(msg)
+        else:
+            await update.callback_query.edit_message_text(msg)
+        return ConversationHandler.END
+        
+    keyboard = [
+        [InlineKeyboardButton("Netflix", callback_data="plat_netflix")],
+        [InlineKeyboardButton("Disney", callback_data="plat_disney")],
+        [InlineKeyboardButton("Prime", callback_data="plat_prime")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.message:
+        await update.message.reply_text("¡Hola! Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
+    else:
+        await update.callback_query.edit_message_text("Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
+    return CHOOSING_PLATFORM
+
+async def platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    plataforma = query.data.split('_')[1]
+    context.user_data['plataforma'] = plataforma
+
+    if plataforma == 'netflix':
+
+        keyboard = []
+        # Disponible para todos los usuarios autorizados
+        keyboard.append([InlineKeyboardButton("Código de inicio de sesión", callback_data="act_login")])
+            
+        keyboard.extend([
+            [InlineKeyboardButton("Estoy de viaje", callback_data="act_travel")],
+            [InlineKeyboardButton("Actualizar hogar", callback_data="act_home")],
+            [InlineKeyboardButton("Código de 6 dígitos", callback_data="act_6digits")],
+            [InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]
+        ])
+        await query.edit_message_text(
+            text=f"Has seleccionado Netflix. Ahora, elige el tipo de código:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_ACTION
+    else:
+        # Disney y Prime van directo a pedir correo
+        context.user_data['accion'] = 'unique'
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]]
+        await query.edit_message_text(
+            text=f"Has seleccionado {plataforma.capitalize()}.\n\nPor favor, envíame el correo de la cuenta:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return TYPING_EMAIL
+
+async def action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "back_to_start":
+        return await start(update, context)
+        
+    accion = query.data.split('_')[1]
+    
+    # El acceso de inicio de sesión ahora es público para la lista blanca
+        
+    context.user_data['accion'] = accion
+    
+    nombres = {'login': 'Código de inicio de sesión', 'travel': 'Estoy de viaje', 'home': 'Actualizar hogar', 'unique': 'Código único', '6digits': 'Código de 6 dígitos'}
+    nombre = nombres.get(accion, accion)
+    plat = context.user_data.get('plataforma').capitalize()
+    
+    await query.edit_message_text(text=f"Vas a solicitar: {nombre} para {plat}.\n\nPor favor, envíame el correo de la cuenta:")
+    return TYPING_EMAIL
+
+async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = None, panel_pass_param: str = None) -> str:
+    from playwright.async_api import async_playwright
+    import os
+    import re
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            # Login
+            panel_user = "Gianpierrre@gmail.com"
+            panel_pass = "Gianpierrre"
+            
+            # Cuentas que usan el segundo panel
+            cuentas_panel_2 = ["stephaney_kv19021997@hotmail.com"]
+            if email.lower() in cuentas_panel_2:
+                panel_user = "Gianpierrre02@gmail.com"
+                
+            await page.goto("https://sdnetpanel.com/login", timeout=30000)
+            await page.wait_for_selector("input[type='email'], input[type='text']")
+            inputs = page.locator("input")
+            await inputs.nth(0).fill(panel_user)
+            await inputs.nth(1).fill(panel_pass)
+            await page.locator("button:has-text('Login'), button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit']").first.click()
+            
+            # Seleccionar Netflix
+            await page.wait_for_selector("text='Netflix'", timeout=20000)
+            await page.locator("text='Netflix'").first.click()
+            
+            # Mapeo de accion
+            if accion == 'login':
+                opcion_text = 'Códigos de inicio de sesión'
+            elif accion == 'travel':
+                opcion_text = 'Tu código de acceso temporal'
+            elif accion == 'home':
+                opcion_text = 'Actualizar Hogar'
+            elif accion == '6digits':
+                opcion_text = 'Codigo de Verificacion de Inicio de seccion'
+            else:
+                opcion_text = 'Códigos de inicio de sesión'
+                
+            await page.wait_for_selector(f"text='{opcion_text}'", timeout=10000)
+            await page.locator(f"text='{opcion_text}'").first.click()
+            
+            # Modal de busqueda
+            await page.wait_for_selector("input", timeout=10000)
+            
+            # Llenar el correo visible
+            inputs = page.locator("input")
+            count = await inputs.count()
+            for i in range(count):
+                if await inputs.nth(i).is_visible():
+                    await inputs.nth(i).fill(email)
+                    break
+                    
+            # Click Buscar
+            await page.locator("button:has-text('Buscar')").click()
+            
             # Esperar respuesta: puede tardar hasta 2 minutos según la captura
             # Buscaremos que aparezca texto "De:" o algo que indique que cargó el correo
             try:
