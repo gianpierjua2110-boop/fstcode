@@ -218,8 +218,10 @@ def check_15_mins(texto: str) -> tuple[bool, str]:
     mes = meses.get(mes_str, 1)
     
     try:
+        from datetime import timezone, timedelta
         codigo_time = datetime(anio, mes, dia, hora, minuto)
-        now = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+        now = now_utc.astimezone(timezone(timedelta(hours=-5))).replace(tzinfo=None)
         diff = now - codigo_time
         if diff.total_seconds() < 0:
             diff = codigo_time - now
