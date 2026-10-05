@@ -570,7 +570,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
-            return "❌ Hubo un error de conexión con la plataforma CodeFlix."
+            return f"❌ Hubo un error de conexión con la plataforma CodeFlix. DETALLE TÉCNICO: {str(e)}"
         finally:
             await browser.close()
 
