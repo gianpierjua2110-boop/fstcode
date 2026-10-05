@@ -583,7 +583,9 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
 async def get_code_royplay(email: str, plataforma: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        # Forzar zona horaria de Perú para que el renderizado web y el check coincidan visualmente
+        context = await browser.new_context(timezone_id="America/Lima")
+        page = await context.new_page()
         try:
             await page.goto("https://reseller.royplay.com")
             
