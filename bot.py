@@ -483,43 +483,55 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                 if len(blocks) < 2:
                     continue # Aún no carga o no hay resultados
                 
-                # Analizamos solo el primer correo (el más reciente)
-                tag_part = blocks[0][-20:]
-                body_part = blocks[1][:300]
-                first_email_text = tag_part + email.lower() + body_part
+                # Iteramos por TODOS los correos cargados para este email
+                correo_valido_encontrado = False
+                texto_correo_valido = ""
                 
-                # Validar que el tipo de mensaje coincida con la accion solicitada
-                if accion == 'login' and 'login' not in tag_part:
-                    continue
-                if accion == '6digits' and 'otro' not in tag_part:
-                    continue
-                if accion == 'travel' and 'viaje' not in tag_part:
-                    continue
-                if accion == 'home' and 'hogar' not in tag_part:
-                    continue
-                
-                # Verificamos si es reciente
-                tiempos_min = re.findall(r'hace\s+(\d+)\s+min', first_email_text)
-                es_reciente = False
-                if tiempos_min:
-                    if int(tiempos_min[0]) <= 15:
+                for i in range(1, len(blocks)):
+                    tag_part = blocks[i-1][-20:]
+                    body_part = blocks[i][:300]
+                    email_text = tag_part + email.lower() + body_part
+                    
+                    # Validar que el tipo de mensaje coincida con la accion solicitada
+                    if accion == 'login' and 'login' not in tag_part:
+                        continue
+                    if accion == '6digits' and 'otro' not in tag_part:
+                        continue
+                    if accion == 'travel' and 'viaje' not in tag_part:
+                        continue
+                    if accion == 'home' and 'hogar' not in tag_part:
+                        continue
+                    
+                    # Verificamos si es reciente
+                    tiempos_min = re.findall(r'hace\s+(\d+)\s+min', email_text)
+                    es_reciente = False
+                    if tiempos_min:
+                        if int(tiempos_min[0]) <= 15:
+                            es_reciente = True
+                    elif "justo ahora" in email_text or "segundos" in email_text:
                         es_reciente = True
-                elif "justo ahora" in first_email_text or "segundos" in first_email_text:
-                    es_reciente = True
-                elif "hace 1 min" in first_email_text or "hace 2 min" in first_email_text:
-                    es_reciente = True
+                    elif "hace 1 min" in email_text or "hace 2 min" in email_text:
+                        es_reciente = True
+                    
+                    if not es_reciente:
+                        continue
+                        
+                    # Si llegamos aquí, encontramos un correo que cumple todo (tipo correcto y es reciente)
+                    correo_valido_encontrado = True
+                    texto_correo_valido = email_text
+                    break # Salimos del for, ya encontramos el correo correcto
                 
-                if not es_reciente:
-                    # Esperamos en el loop por si llega uno nuevo, no nos rendimos inmediatamente
+                if not correo_valido_encontrado:
+                    # Esperamos en el loop while por si llega uno nuevo
                     continue
                 
-                # Dependiendo de la accion buscamos la respuesta
+                # Dependiendo de la accion extraemos del correo válido que encontramos
                 if accion == '6digits':
-                    matches = re.findall(r'\b(\d{6})\b', first_email_text)
+                    matches = re.findall(r'\b(\d{6})\b', texto_correo_valido)
                     if matches:
                         return f"🔑 Aquí tienes el código de 6 dígitos:\n\n`{matches[0]}`"
                 elif accion == 'login':
-                    matches = re.findall(r'\b(\d{4})\b', first_email_text)
+                    matches = re.findall(r'\b(\d{4})\b', texto_correo_valido)
                     matches = [m for m in matches if m not in ("2023", "2024", "2025", "2026", "2027", "2028")]
                     if matches:
                         return f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{matches[0]}`"
