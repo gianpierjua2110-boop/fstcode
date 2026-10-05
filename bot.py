@@ -227,7 +227,938 @@ def check_15_mins(texto: str) -> tuple[bool, str]:
             diff = codigo_time - now
             
         if diff.total_seconds() > 15 * 60:
-            return False, "❌ El último código enviado ya venció. Por favor, solicita uno nuevo en la plataforma."
+            return False, f"❌ El último código encontrado es del {dia} de {mes_str.capitalize()} a las {hora:02d}:{minuto:02d}.\n\n(DEBUG: Hora actual en el bot = {now.strftime('%H:%M:%S')}).\nTiene más de 15 minutos de antigüedad, por lo tanto **ya no es válido**."
         return True, ""
     except:
+        return True, ""
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_allowed(update.effective_user.id):
+        msg = "⛔ No tienes autorización para usar este bot."
+        if update.message:
+            await update.message.reply_text(msg)
+        else:
+            await update.callback_query.edit_message_text(msg)
+        return ConversationHandler.END
         
+    keyboard = [
+        [InlineKeyboardButton("Netflix", callback_data="plat_netflix")],
+        [InlineKeyboardButton("Disney", callback_data="plat_disney")],
+        [InlineKeyboardButton("Prime", callback_data="plat_prime")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.message:
+        await update.message.reply_text("¡Hola! Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
+    else:
+        await update.callback_query.edit_message_text("Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
+    return CHOOSING_PLATFORM
+
+async def platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    plataforma = query.data.split('_')[1]
+    context.user_data['plataforma'] = plataforma
+
+    if plataforma == 'netflix':
+
+        keyboard = []
+        # Disponible para todos los usuarios autorizados
+        keyboard.append([InlineKeyboardButton("Código de inicio de sesión", callback_data="act_login")])
+            
+        keyboard.extend([
+            [InlineKeyboardButton("Estoy de viaje", callback_data="act_travel")],
+            [InlineKeyboardButton("Actualizar hogar", callback_data="act_home")],
+            [InlineKeyboardButton("Código de 6 dígitos", callback_data="act_6digits")],
+            [InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]
+        ])
+        await query.edit_message_text(
+            text=f"Has seleccionado Netflix. Ahora, elige el tipo de código:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_ACTION
+    else:
+        # Disney y Prime van directo a pedir correo
+        context.user_data['accion'] = 'unique'
+        keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]]
+        await query.edit_message_text(
+            text=f"Has seleccionado {plataforma.capitalize()}.\n\nPor favor, envíame el correo de la cuenta:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return TYPING_EMAIL
+
+async def action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "back_to_start":
+        return await start(update, context)
+        
+    accion = query.data.split('_')[1]
+    
+    # El acceso de inicio de sesión ahora es público para la lista blanca
+        
+    context.user_data['accion'] = accion
+    
+    nombres = {'login': 'Código de inicio de sesión', 'travel': 'Estoy de viaje', 'home': 'Actualizar hogar', 'unique': 'Código único', '6digits': 'Código de 6 dígitos'}
+    nombre = nombres.get(accion, accion)
+    plat = context.user_data.get('plataforma').capitalize()
+    
+    await query.edit_message_text(text=f"Vas a solicitar: {nombre} para {plat}.\n\nPor favor, envíame el correo de la cuenta:")
+    return TYPING_EMAIL
+
+async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = None, panel_pass_param: str = None) -> str:
+    from playwright.async_api import async_playwright
+    import os
+    import re
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            # Login
+            panel_user = "Gianpierrre@gmail.com"
+            panel_pass = "Gianpierrre"
+            
+            # Cuentas que usan el segundo panel
+            cuentas_panel_2 = ["stephaney_kv19021997@hotmail.com"]
+            if email.lower() in cuentas_panel_2:
+                panel_user = "Gianpierrre02@gmail.com"
+                
+            await page.goto("https://sdnetpanel.com/login", timeout=30000)
+            await page.wait_for_selector("input[type='email'], input[type='text']")
+            inputs = page.locator("input")
+            await inputs.nth(0).fill(panel_user)
+            await inputs.nth(1).fill(panel_pass)
+            await page.locator("button:has-text('Login'), button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit']").first.click()
+            
+            # Seleccionar Netflix
+            await page.wait_for_selector("text='Netflix'", timeout=20000)
+            await page.locator("text='Netflix'").first.click()
+            
+            # Mapeo de accion
+            if accion == 'login':
+                opcion_text = 'Códigos de inicio de sesión'
+            elif accion == 'travel':
+                opcion_text = 'Tu código de acceso temporal'
+            elif accion == 'home':
+                opcion_text = 'Actualizar Hogar'
+            elif accion == '6digits':
+                opcion_text = 'Codigo de Verificacion de Inicio de seccion'
+            else:
+                opcion_text = 'Códigos de inicio de sesión'
+                
+            await page.wait_for_selector(f"text='{opcion_text}'", timeout=10000)
+            await page.locator(f"text='{opcion_text}'").first.click()
+            
+            # Modal de busqueda
+            await page.wait_for_selector("input", timeout=10000)
+            
+            # Llenar el correo visible
+            inputs = page.locator("input")
+            count = await inputs.count()
+            for i in range(count):
+                if await inputs.nth(i).is_visible():
+                    await inputs.nth(i).fill(email)
+                    break
+                    
+            # Click Buscar
+            await page.locator("button:has-text('Buscar')").click()
+            
+            # === OPTIMIZACION: POLLING INTELIGENTE ===
+            import time
+            start_time = time.time()
+            found_result = None
+            
+            while time.time() - start_time < 60: # Esperar máximo 60 segundos
+                await page.wait_for_timeout(2000)
+                
+                modal = page.locator(".modal-content, div[role='dialog']").first
+                if await modal.is_visible():
+                    texto = await modal.inner_text()
+                else:
+                    texto = await page.locator("body").inner_text()
+
+                import re
+                
+                # Buscar código de 6 dígitos
+                matches_6 = re.findall(r'\b\d\s*\d\s*\d\s*\d\s*\d\s*\d\b', texto)
+                if matches_6:
+                    codigo = matches_6[0].replace(" ", "")
+                    found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    break
+                    
+                # Buscar código de 4 dígitos (excluyendo años comunes del texto)
+                matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
+                for m in matches_4:
+                    codigo = m.replace(" ", "")
+                    if codigo not in ("2023", "2024", "2025", "2026", "2027", "2028"):
+                        found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                        break
+                
+                if found_result:
+                    break
+                    
+                # Si la acción fue Actualizar Hogar y Netflix envió un botón/enlace en lugar de un código
+                if accion != 'login':
+                    hrefs = []
+                    for frame in page.frames:
+                        try:
+                            frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
+                            hrefs.extend(frame_hrefs)
+                        except:
+                            pass
+                    
+                    try:
+                        html_content = await page.content()
+                        for frame in page.frames:
+                            try: html_content += await frame.content()
+                            except: pass
+                        
+                        import re as regex_mod
+                        regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
+                        hrefs.extend(regex_urls)
+                    except:
+                        pass
+
+                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
+                    
+                    for href in hrefs:
+                        if 'netflix.com' in href:
+                            if not any(ign in href for ign in ignore_list):
+                                found_result = f"🔗 Aquí tienes el enlace de Netflix:\n\n{href}"
+                                break
+                
+                if found_result:
+                    break
+                    
+            if found_result:
+                return found_result
+            # Fallback a captura SOLO si el texto/enlace no se pudo extraer
+            path = os.path.join(os.getcwd(), "resultado_sdnetpanel.png")
+            if await modal.is_visible():
+                await modal.screenshot(path=path)
+            else:
+                await page.screenshot(path=path)
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
+            
+        except Exception as e:
+            print(f"Error SDNetPanel: {e}", flush=True)
+            return f"❌ Hubo un error al buscar en SDNetPanel. Detalle:\n\n{str(e)}"
+        finally:
+            await browser.close()
+
+async def get_code_codeflix(email: str, accion: str, panel_user_param: str = None, panel_pass_param: str = None) -> str:
+    from playwright.async_api import async_playwright
+    import os
+    import re
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            await page.goto("https://codeflix.cc")
+            await page.locator("text='Iniciar sesión'").first.click()
+            await page.wait_for_selector("input[type='text']", timeout=5000)
+            
+            p_user = panel_user_param if panel_user_param else WEB_USER
+            p_pass = panel_pass_param if panel_pass_param else WEB_PASS
+            await page.locator("input[type='text']").fill(p_user)
+            await page.locator("input[type='password']").fill(p_pass)
+            await page.locator("text='Iniciar sesión'").last.click()
+            
+            # Esperar a que la página cargue completamente (usamos Buscar código como referencia de que el DOM está listo)
+            await page.wait_for_selector("text='Buscar código'", timeout=15000)
+            await page.wait_for_timeout(2000) # Dar un respiro a JS para inicializar los tabs
+            
+            # Clicar en Bandeja
+            await page.locator("text='Bandeja'").first.click()
+            
+            # Buscar el input visible específicamente (por si hay inputs ocultos de otras pestañas)
+            await page.wait_for_selector("input[placeholder='Filtrar por email o asunto...']", state="visible", timeout=10000)
+            await page.locator("input[placeholder='Filtrar por email o asunto...']").fill(email)
+            await page.wait_for_timeout(2000) # Dar tiempo a que filtre
+            
+            # Polling inteligente en Bandeja
+            import time
+            start_time = time.time()
+            
+            while time.time() - start_time < 45:
+                await page.wait_for_timeout(2000)
+                
+                # Extraemos todo el texto
+                texto_bandeja = await page.locator("body").inner_text()
+                
+                # Validamos si los resultados cargaron buscando el email
+                blocks = texto_bandeja.lower().split(email.lower())
+                if len(blocks) < 2:
+                    continue # Aún no carga o no hay resultados
+                
+                # Iteramos por TODOS los correos cargados para este email
+                correo_valido_encontrado = False
+                texto_correo_valido = ""
+                
+                for i in range(1, len(blocks)):
+                    tag_part = blocks[i-1][-20:]
+                    body_part = blocks[i][:300]
+                    email_text = tag_part + email.lower() + body_part
+                    
+                    # Validar que el tipo de mensaje coincida con la accion solicitada
+                    if accion == 'login' and 'login' not in tag_part:
+                        continue
+                    if accion == '6digits' and 'otro' not in tag_part:
+                        continue
+                    if accion == 'travel' and 'viaje' not in tag_part:
+                        continue
+                    if accion == 'home' and 'hogar' not in tag_part:
+                        continue
+                    
+                    # Verificamos si es reciente
+                    tiempos_min = re.findall(r'hace\s+(\d+)\s+min', email_text)
+                    es_reciente = False
+                    if tiempos_min:
+                        if int(tiempos_min[0]) <= 15:
+                            es_reciente = True
+                    elif "justo ahora" in email_text or "segundos" in email_text:
+                        es_reciente = True
+                    elif "hace 1 min" in email_text or "hace 2 min" in email_text:
+                        es_reciente = True
+                    
+                    if not es_reciente:
+                        continue
+                        
+                    # Si llegamos aquí, encontramos un correo que cumple todo (tipo correcto y es reciente)
+                    correo_valido_encontrado = True
+                    texto_correo_valido = email_text
+                    break # Salimos del for, ya encontramos el correo correcto
+                
+                if not correo_valido_encontrado:
+                    # Esperamos en el loop while por si llega uno nuevo
+                    continue
+                
+                # Dependiendo de la accion extraemos del correo válido que encontramos
+                if accion == '6digits':
+                    matches = re.findall(r'\b(\d{6})\b', texto_correo_valido)
+                    if matches:
+                        return f"🔑 Aquí tienes el código de 6 dígitos:\n\n`{matches[0]}`"
+                elif accion == 'login':
+                    matches = re.findall(r'\b(\d{4})\b', texto_correo_valido)
+                    matches = [m for m in matches if m not in ("2023", "2024", "2025", "2026", "2027", "2028")]
+                    if matches:
+                        return f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{matches[0]}`"
+                elif accion in ('travel', 'home'):
+                    # También extraemos todos los enlaces
+                    hrefs = []
+                    try:
+                        for frame in page.frames:
+                            frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
+                            if frame_hrefs: hrefs.extend(frame_hrefs)
+                    except:
+                        pass
+                    try:
+                        html_content = await page.content()
+                        for frame in page.frames:
+                            try: html_content += await frame.content()
+                            except: pass
+                        import re as regex_mod
+                        regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
+                        hrefs.extend(regex_urls)
+                    except:
+                        pass
+
+                    # Buscar el enlace de Netflix
+                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
+                    for href in hrefs:
+                        if 'netflix.com' in href and not any(ign in href for ign in ignore_list):
+                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                    
+                    # A veces el enlace de viaje/hogar no dice netflix.com explícitamente en href o el href está en un botoncito
+                    for href in hrefs:
+                        if 'update-primary-location' in href or 'travel' in href or 'account' in href:
+                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                            
+            return f"❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos. DEBUG Bandeja (primeros 200 chars): {texto_bandeja[:200]}"
+            
+        except Exception as e:
+            print(f"Error CodeFlix: {e}", flush=True)
+            return f"❌ Hubo un error de conexión con la plataforma CodeFlix. DETALLE TÉCNICO: {str(e)}"
+        finally:
+            await browser.close()
+
+async def get_code_royplay(email: str, plataforma: str) -> str:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        # Forzar zona horaria de Perú para que el renderizado web y el check coincidan visualmente
+        context = await browser.new_context(timezone_id="America/Lima")
+        page = await context.new_page()
+        try:
+            await page.goto("https://reseller.royplay.com")
+            
+            # Esperamos que cargue el titulo para asegurarnos de que la página renderizó
+            await page.wait_for_selector("text='Gestión de Códigos'", timeout=15000)
+            
+            # Buscamos exclusivamente los inputs que NO sean ocultos (hidden)
+            visible_inputs = page.locator("input:not([type='hidden'])")
+            count = await visible_inputs.count()
+            if count >= 2:
+                await visible_inputs.nth(0).fill(ROYPLAY_CODE)
+                await visible_inputs.nth(1).fill(email)
+            else:
+                return "❌ No se encontraron los campos visibles en el sistema."
+                
+            if plataforma == 'disney':
+                await page.locator("select#tipo_codigo").select_option("disney")
+            else:
+                await page.locator("select#tipo_codigo").select_option("amazon_code")
+                
+            await page.locator("button#searchBtn").click(no_wait_after=True)
+            
+            try:
+                # Esperar a que la lista de emails se pueble
+                await page.wait_for_selector("#emailList li", timeout=20000)
+            except:
+                return "❌ No se encontraron códigos recientes para este correo en la base de datos."
+            
+            await page.wait_for_timeout(1000)
+            
+            try:
+                # Clic exacto y seguro en el primer correo
+                await page.locator("#emailList li").first.click()
+            except Exception as e:
+                print("Error click:", e, flush=True)
+                
+            try:
+                # Esperar a que el modal se abra
+                await page.wait_for_selector("#emailModal.open", timeout=5000)
+            except:
+                return "❌ No se pudo abrir el mensaje con el código."
+            
+            modal = page.locator("#emailModal")
+            try:
+                # Extraer la fecha del HTML nativo del modal
+                fecha_text = await page.locator("p:has-text('Fecha')").locator("xpath=following-sibling::p").first.inner_text()
+                is_valid, msg = check_15_mins(fecha_text)
+                if not is_valid:
+                    return msg
+            except Exception as e:
+                print("Error verificando fecha:", e, flush=True)
+                
+            texto_email = ""
+            try:
+                # Extraer el cuerpo del correo desde el div asignado
+                div_contenido = page.locator("p:has-text('Contenido')").locator("xpath=following-sibling::div").first
+                if await div_contenido.count() > 0:
+                    texto_email = await div_contenido.inner_text()
+                    await div_contenido.evaluate("el => el.scrollTop = el.scrollHeight")
+                else:
+                    texto_email = await modal.inner_text()
+                    
+                await page.wait_for_timeout(1000) 
+                
+                import re
+                match = re.search(r'\b(\d{6})\b', texto_email)
+                if match:
+                    codigo = match.group(1)
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    
+            except Exception as e:
+                print("Error extrayendo texto:", e, flush=True)
+            
+            if await modal.count() == 0:
+                modal = page
+                
+            path = os.path.join(os.getcwd(), "resultado_royplay.png")
+            await modal.screenshot(path=path)
+            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
+            
+        except Exception as e:
+            print(f"Error royplay: {e}", flush=True)
+            return f"Hubo un error de conexión con el sistema. Detalle para depuración:\n\n{str(e)}"
+        finally:
+            await browser.close()
+
+
+
+
+async def get_code_cpanel_imap(email_cuenta: str, password: str, servidor: str) -> str:
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_get_code_cpanel_imap_sync, email_cuenta, password, servidor), timeout=25.0)
+    except Exception as e:
+        return f"❌ Hubo un error de red o timeout al leer {email_cuenta}." 
+
+def _get_code_cpanel_imap_sync(email_cuenta: str, password: str, servidor: str) -> str:
+    import imaplib
+    import email
+    import re
+    from datetime import datetime, timezone, timedelta
+
+    try:
+        # Intentar conectar al servidor IMAP de cPanel
+        mail = imaplib.IMAP4_SSL(servidor, timeout=15)
+        mail.login(email_cuenta, password)
+        mail.select("inbox")
+        
+        status, messages = mail.search(None, '(FROM "disneyplus")')
+        if status != "OK" or not messages[0]:
+            return f"❌ No se encontraron códigos recientes para {email_cuenta}."
+            
+        email_ids = messages[0].split()
+        for e_id in reversed(email_ids[-5:]):
+            res, msg_data = mail.fetch(e_id, "(RFC822)")
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    
+                    date_tuple = email.utils.parsedate_tz(msg.get('Date'))
+                    if date_tuple:
+                        local_date = datetime.fromtimestamp(email.utils.mktime_tz(date_tuple), timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        diff = now - local_date
+                        if diff > timedelta(minutes=15):
+                            continue
+                    
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/html":
+                                try:
+                                    body = part.get_payload(decode=True).decode('utf-8', 'ignore')
+                                    break
+                                except:
+                                    pass
+                    else:
+                        try:
+                            body = msg.get_payload(decode=True).decode('utf-8', 'ignore')
+                        except:
+                            pass
+                            
+                    if not body:
+                        continue
+                        
+                    texto_limpio = re.sub(r'<style.*?>.*?</style>', ' ', body, flags=re.DOTALL | re.IGNORECASE)
+                    texto_limpio = re.sub(r'<[^>]+>', ' ', texto_limpio)
+                    matches = re.findall(r'(?<!#)\b(\d{6})\b', texto_limpio)
+                    codigos_reales = [m for m in matches if m not in ('707070', '000000', 'ffffff')]
+                    
+                    if codigos_reales:
+                        mail.logout()
+                        return f"🔑 Aquí tienes el código extraído:\n\n`{codigos_reales[0]}`"
+
+        mail.logout()
+        return f"❌ Se encontraron correos para {email_cuenta}, pero ninguno en los últimos 15 min."
+        
+    except Exception as e:
+        print(f"Error IMAP Cpanel para {email_cuenta}: {e}", flush=True)
+        return f"❌ Hubo un error de conexión al buzón de {email_cuenta}."
+
+
+import asyncio
+async def get_code_gmail(email_cuenta: str, app_password: str) -> str:
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_get_code_gmail_sync, email_cuenta, app_password), timeout=25.0)
+    except Exception as e:
+        return f"❌ Hubo un error de red o timeout al leer {email_cuenta}." 
+
+def _get_code_gmail_sync(email_cuenta: str, app_password: str) -> str:
+    import imaplib
+    import email
+    from email.header import decode_header
+    import re
+    from datetime import datetime, timezone, timedelta
+
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=15)
+        mail.login(email_cuenta, app_password.replace(" ", ""))
+        mail.select("inbox")
+
+        status, messages = mail.search(None, '(FROM "disneyplus")')
+        if status != "OK" or not messages[0]:
+            return f"❌ No se encontraron correos de Disney en {email_cuenta}."
+
+        email_ids = messages[0].split()
+        for e_id in reversed(email_ids[-5:]):
+            res, msg_data = mail.fetch(e_id, "(RFC822)")
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    
+                    date_tuple = email.utils.parsedate_tz(msg.get('Date'))
+                    if date_tuple:
+                        local_date = datetime.fromtimestamp(email.utils.mktime_tz(date_tuple), timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        diff = now - local_date
+                        if diff > timedelta(minutes=15):
+                            continue
+                            
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/html":
+                                try:
+                                    body = part.get_payload(decode=True).decode('utf-8', 'ignore')
+                                    break
+                                except:
+                                    pass
+                    else:
+                        try:
+                            body = msg.get_payload(decode=True).decode('utf-8', 'ignore')
+                        except:
+                            pass
+                            
+                    if not body:
+                        continue
+
+                    texto_limpio = re.sub(r'<style.*?>.*?</style>', ' ', body, flags=re.DOTALL | re.IGNORECASE)
+                    texto_limpio = re.sub(r'<[^>]+>', ' ', texto_limpio)
+                    matches = re.findall(r'(?<!#)\b(\d{6})\b', texto_limpio)
+                    codigos_reales = [m for m in matches if m not in ('707070', '000000', 'ffffff')]
+                    
+                    if codigos_reales:
+                        mail.logout()
+                        return f"🔑 Aquí tienes el código extraído de {email_cuenta}:\n\n`{codigos_reales[0]}`"
+
+        mail.logout()
+        return "❌ Se encontraron correos de Disney, pero ninguno reciente con un código válido (15 min)."
+
+    except Exception as e:
+        print(f"Error IMAP Gmail para {email_cuenta}: {e}", flush=True)
+        return f"❌ Hubo un error de conexión al leer {email_cuenta}."
+
+async def get_code_mttmail(email_cliente: str) -> str:
+    from playwright.async_api import async_playwright
+    import re
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            
+            await page.goto("https://mttmail.net/", timeout=15000)
+            
+            # Iniciar sesión si lo pide
+            if await page.locator("#usuario").count() > 0:
+                await page.locator("#usuario").fill("fstflix")
+                await page.locator("#password").fill("12345678")
+                await page.locator(".login-submit").click()
+                
+            # Esperar a que cargue el buscador
+            await page.wait_for_selector("#correo", timeout=10000)
+            
+            # Buscar el correo
+            await page.locator("#correo").fill(email_cliente)
+            await page.locator(".mail-query-button").click()
+            
+            # Esperar a que carguen los resultados o el estado de "vacío"
+            await page.wait_for_selector(".mail-workspace", timeout=10000)
+            
+            # Si dice que está vacío
+            if await page.locator(".mail-list-empty").is_visible():
+                await browser.close()
+                return "❌ No hay mensajes recientes (en los últimos 15 minutos) para esta cuenta."
+                
+            # Intentar extraer el código directo del atributo de copiado que tiene el panel
+            botones_codigo = await page.locator("[data-mail-copy-code]").count()
+            if botones_codigo > 0:
+                codigo = await page.locator("[data-mail-copy-code]").first.get_attribute("data-mail-copy-code")
+                if codigo:
+                    await browser.close()
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    
+            # Plan B: Si no hay botón, entrar al primer mensaje y usar nuestra lógica de regex
+            links = await page.locator("[data-mail-message-link]").count()
+            if links > 0:
+                await page.locator("[data-mail-message-link]").first.click()
+                await page.wait_for_selector(".mail-reader-panel", timeout=5000)
+                
+                # Darle 1 segundo al contenido para renderizarse
+                await page.wait_for_timeout(1000)
+                cuerpo = await page.locator(".mail-reader-panel").inner_html()
+                
+                texto_limpio = re.sub(r'<style.*?>.*?</style>', ' ', cuerpo, flags=re.DOTALL | re.IGNORECASE)
+                texto_limpio = re.sub(r'<[^>]+>', ' ', texto_limpio)
+                
+                matches = re.findall(r'(?<!#)\b(\d{6})\b', texto_limpio)
+                codigos_reales = [m for m in matches if m not in ('707070', '000000', 'ffffff')]
+                
+                await browser.close()
+                if codigos_reales:
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigos_reales[0]}`"
+            
+            await browser.close()
+            return "❌ Se encontraron mensajes, pero no se pudo extraer el código PIN."
+    except Exception as e:
+        print(f"Error MTTMail Playwright: {e}", flush=True)
+        return "❌ Hubo un error de conexión al buscar en el panel secundario."
+
+async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    email = update.message.text
+    plataforma = context.user_data.get('plataforma')
+    accion = context.user_data.get('accion')
+    
+    # Registro de uso
+    try:
+        with open("historial_uso.txt", "a", encoding="utf-8") as f:
+            fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            u = update.effective_user
+            nombre = u.username or u.first_name or "Desconocido"
+            f.write(f"[{fecha}] Usuario: @{nombre} (ID: {u.id}) | Plataforma: {plataforma} | Acción: {accion} | Correo: {email}\n")
+    except:
+        pass
+        
+    msg = await update.message.reply_text("Buscando tu respuesta en la plataforma, espera unos segundos... ⏳")
+    
+    email_low = email.lower()
+    
+    # 🧠 Mapeo maestro de contraseñas
+    cuentas_data = cargar_cuentas()
+    gmail_passwords = cuentas_data.get("gmail_passwords", {})
+    cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
+    sdnet_emails = cuentas_data.get("sdnet_emails", [])
+
+
+    # Filtro de Alias Automatico para correos
+    base_email = email_low
+    if '+' in email_low and email_low.endswith('@gmail.com'):
+        base_email = email_low.split('+')[0] + '@gmail.com'
+
+    if plataforma == 'netflix':
+
+        if email_low in sdnet_emails:
+            resultado = await get_code_sdnetpanel(email_low, accion)
+        else:
+            resultado = await get_code_codeflix(email, accion)
+    elif plataforma == 'prime':
+        resultado = await get_code_royplay(email, plataforma)
+    elif plataforma == 'disney' and email_low in cpanel_accounts:
+        acc = cpanel_accounts[email_low]
+        resultado = await get_code_cpanel_imap(email_low, acc['pass'], acc['server'])
+    elif plataforma == 'disney' and base_email in gmail_passwords:
+        # El bot va directo al Gmail base usando la contraseña exacta
+        resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
+    elif email_low.endswith('@mttplay.net') or email_low.endswith('@mttpe.com'):
+        resultado = await get_code_mttmail(email_low)
+    else:
+        resultado = await get_code_royplay(email, plataforma)
+    
+    if resultado.startswith("SCREENSHOT:"):
+        path = resultado.split("SCREENSHOT:")[1]
+        try:
+            caption_text = "✅ No encontré el texto exacto, pero aquí tienes la captura:"
+            await update.message.reply_photo(photo=open(path, 'rb'), caption=caption_text)
+        except Exception:
+            pass
+        await msg.delete()
+    else:
+        await update.message.reply_text(f"✅ ¡Respuesta obtenida!\n\n{resultado}")
+        await msg.delete()
+        
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Operación cancelada. Escribe /start para empezar.")
+    return ConversationHandler.END
+
+
+
+async def add_sdnet(update, context):
+    if update.effective_user.id != 5190513736: return
+    try:
+        email = context.args[0].lower()
+        data = cargar_cuentas()
+        if email not in data["sdnet_emails"]:
+            data["sdnet_emails"].append(email)
+            guardar_cuentas(data)
+            await update.message.reply_text(f"✅ {email} agregado a SDNetPanel.")
+        else:
+            await update.message.reply_text("⚠️ El correo ya existía en SDNetPanel.")
+    except:
+        await update.message.reply_text("📝 Uso correcto: /add_sdnet correo@ejemplo.com")
+
+
+async def add_sdnet2(update, context):
+    if update.effective_user.id != 5190513736: return
+    try:
+        email = context.args[0].lower()
+        data = cargar_cuentas()
+        
+        # Guardarlo en la lista general para saber que es de SDNetPanel
+        if email not in data["sdnet_emails"]:
+            data["sdnet_emails"].append(email)
+            
+        # Y guardarlo en la lista específica del panel 2
+        if "sdnet_emails_panel2" not in data:
+            data["sdnet_emails_panel2"] = []
+            
+        if email not in data["sdnet_emails_panel2"]:
+            data["sdnet_emails_panel2"].append(email)
+            guardar_cuentas(data)
+            await update.message.reply_text(f"✅ {email} agregado a SDNetPanel (Acceso Nuevo: Gianpierrre02).")
+        else:
+            await update.message.reply_text("⚠️ El correo ya existía en el panel nuevo.")
+    except:
+        await update.message.reply_text("📝 Uso correcto: /add_sdnet2 correo@ejemplo.com")
+
+async def add_gmail(update, context):
+    if update.effective_user.id != 5190513736: return
+    try:
+        email = context.args[0].lower()
+        password = context.args[1]
+        data = cargar_cuentas()
+        data["gmail_passwords"][email] = password
+        guardar_cuentas(data)
+        await update.message.reply_text(f"✅ {email} agregado a Gmail IMAP.")
+    except:
+        await update.message.reply_text("📝 Uso correcto: /add_gmail correo@gmail.com pass_de_app")
+
+async def add_cpanel(update, context):
+    if update.effective_user.id != 5190513736: return
+    try:
+        email = context.args[0].lower()
+        password = context.args[1]
+        server = context.args[2]
+        data = cargar_cuentas()
+        data["cpanel_accounts"][email] = {"pass": password, "server": server}
+        guardar_cuentas(data)
+        await update.message.reply_text(f"✅ {email} agregado a cPanel IMAP.")
+    except:
+        await update.message.reply_text("📝 Uso correcto: /add_cpanel correo@dominio.com password servidor.com")
+
+async def comandos(update, context):
+    if update.effective_user.id != 5190513736: return
+    texto = """
+🛠 <b>COMANDOS DE ADMINISTRADOR</b> 🛠
+
+👥 Gestión de Usuarios:
+/agregar [ID] - Autoriza a un usuario
+/quitar [ID] - Revoca acceso
+/lista - Muestra usuarios autorizados
+/mi_id - Muestra el ID del usuario
+
+📊 Estadísticas:
+/stats - Uso total
+/historial - Descargar historial TXT
+
+⚙️ Gestión de Cuentas (Correos):
+/add_sdnet [correo] - Enruta a SDNetPanel (Acceso 1)
+/add_sdnet2 [correo] - Enruta a SDNetPanel (Acceso 2)
+/add_gmail [correo] [pass_app] - Agrega Gmail (IMAP)
+/add_cpanel [correo] [pass] [server] - Agrega cPanel (IMAP)
+
+Nota: Los correos que no agregues con estos comandos irán por defecto a CodeFlix.
+"""
+    await update.message.reply_text(texto)
+
+import threading
+import asyncio
+from aiohttp import web
+
+def run_web_server():
+    async def background_scrape(data):
+        try:
+            email = data.get("email", "").lower()
+            plataforma = data.get("plataforma", "").lower()
+            accion = data.get("accion", "")
+            job_id = data.get("job_id", "")
+            
+            laravel_data = fetch_laravel_credentials(email)
+            resultado = "Error: no se encontró configuración en Laravel o fallo en las credenciales."
+            
+            if laravel_data and laravel_data.get('success'):
+                scraping = laravel_data.get('scraping', {})
+                modo = scraping.get('modo')
+                l_user = scraping.get('user')
+                l_pass = scraping.get('pass')
+                l_url = scraping.get('url')
+                
+                if modo == 'panel_sdnet':
+                    resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
+                elif modo == 'panel_codeflix':
+                    resultado = await get_code_codeflix(email, accion, l_user, l_pass)
+                elif modo == 'imap' and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
+                    resultado = await get_code_gmail(email, l_pass)
+                elif modo == 'imap':
+                    l_server = l_url if l_url else f"mail.{email.split('@')[1]}"
+                    resultado = await get_code_cpanel_imap(email, l_pass, l_server)
+                else:
+                    resultado = await get_code_royplay(email, plataforma)
+            
+            # Enviar resultado de vuelta a Laravel
+            callback_url = data.get("callback_url", "https://darkviolet-rat-754475.hostingersite.com/api/bot/callback")
+            try:
+                requests.post(callback_url, json={"job_id": job_id, "resultado": resultado}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=15)
+                print(f"[API Web] Resultado enviado a Laravel para job {job_id}")
+            except Exception as ex:
+                print(f"[API Web] Error enviando callback a Laravel: {ex}")
+
+        except Exception as e:
+            print(f"[API Web] Error en tarea de fondo: {e}")
+            try:
+                requests.post(data.get("callback_url"), json={"job_id": data.get("job_id"), "resultado": f"Error interno: {str(e)}"}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=10)
+            except:
+                pass
+
+    async def handle_scrape(request):
+        try:
+            data = await request.json()
+            print(f"[API Web] Solicitud recibida: {data.get('email')} | {data.get('plataforma')} | {data.get('accion')}")
+            
+            # Lanzar tarea en segundo plano sin bloquear la respuesta HTTP
+            asyncio.create_task(background_scrape(data))
+            
+            return web.json_response({"success": True, "message": "Extracción iniciada en segundo plano..."})
+        except Exception as e:
+            print(f"[API Web] Error procesando la petición inicial: {e}")
+            return web.json_response({"success": False, "error": str(e)}, status=500)
+
+    async def init_app():
+        app = web.Application()
+        app.router.add_post('/api/scrape', handle_scrape)
+        return app
+
+    # Creamos un nuevo bucle de eventos para el hilo del servidor web
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app = loop.run_until_complete(init_app())
+    
+    # Configuramos el servidor manualmente para evitar errores de hilos (set_wakeup_fd)
+    runner = web.AppRunner(app)
+    loop.run_until_complete(runner.setup())
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    loop.run_until_complete(site.start())
+    
+    print("[API Web] Servidor web interno iniciado en puerto 8000...")
+    
+    try:
+        loop.run_forever()
+    finally:
+        loop.run_until_complete(runner.cleanup())
+
+def main():
+    app = Application.builder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
+    app.add_handler(CommandHandler("mi_id", mi_id))
+    app.add_handler(CommandHandler("agregar", agregar_usuario))
+    app.add_handler(CommandHandler("quitar", quitar_usuario))
+    app.add_handler(CommandHandler("lista", lista_usuarios))
+    app.add_handler(CommandHandler("stats", stats_uso))
+    app.add_handler(CommandHandler("historial", ver_historial))
+    app.add_handler(CommandHandler("add_sdnet", add_sdnet))
+    app.add_handler(CommandHandler("add_sdnet2", add_sdnet2))
+    app.add_handler(CommandHandler("add_gmail", add_gmail))
+    app.add_handler(CommandHandler("add_cpanel", add_cpanel))
+    app.add_handler(CommandHandler("comandos", comandos))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING_PLATFORM: [CallbackQueryHandler(platform_handler, pattern="^plat_")],
+            CHOOSING_ACTION: [CallbackQueryHandler(action_handler, pattern="^act_|^back_to_start$")],
+            TYPING_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_email),
+                CallbackQueryHandler(action_handler, pattern="^back_to_start$")
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(conv_handler)
+    print("Bot con fix de inputs ocultos iniciado...", flush=True)
+    threading.Thread(target=run_web_server, daemon=True).start()
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
