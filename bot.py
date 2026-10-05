@@ -1046,8 +1046,19 @@ def run_web_server():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     app = loop.run_until_complete(init_app())
+    
+    # Configuramos el servidor manualmente para evitar errores de hilos (set_wakeup_fd)
+    runner = web.AppRunner(app)
+    loop.run_until_complete(runner.setup())
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    loop.run_until_complete(site.start())
+    
     print("[API Web] Servidor web interno iniciado en puerto 8000...")
-    web.run_app(app, host='0.0.0.0', port=8000, loop=loop)
+    
+    try:
+        loop.run_forever()
+    finally:
+        loop.run_until_complete(runner.cleanup())
 
 def main():
     app = Application.builder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
