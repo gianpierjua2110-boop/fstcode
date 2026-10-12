@@ -285,7 +285,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
         [InlineKeyboardButton("Netflix", callback_data="plat_netflix")],
         [InlineKeyboardButton("Disney", callback_data="plat_disney")],
-        [InlineKeyboardButton("Prime", callback_data="plat_prime")]
+        [InlineKeyboardButton("Prime", callback_data="plat_prime")],
+        [InlineKeyboardButton("Max (HBO)", callback_data="plat_max")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
@@ -642,11 +643,60 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
 
             return "❌ No se encontró ningún código reciente en la bandeja de entrada. Por favor, solicita reenviar el código en la pantalla y vuelve a intentarlo en unos segundos."
             
-        except Exception as e:
-            print(f"Error CodeFlix: {e}", flush=True)
-            return f"❌ Hubo un error de conexión con la plataforma CodeFlix. DETALLE TÉCNICO: {str(e)}"
-        finally:
-            await browser.close()
+async def get_code_max_botcodesall(email: str) -> str:
+    """Consulta códigos de Max / HBO directamente al bot @CODESALL_BOT mediante Telethon."""
+    from telethon import TelegramClient
+    import time
+
+    api_id = int(os.getenv("TELEGRAM_API_ID", 33736577))
+    api_hash = os.getenv("TELEGRAM_API_HASH", "44b2c837add09429129c81f9910d68ef")
+    session_file = os.path.join(os.path.dirname(__file__), "telethon_session")
+
+    if not os.path.exists(f"{session_file}.session"):
+        return "❌ Error: La sesión de Telegram para @CODESALL_BOT aún no ha sido autenticada en el servidor (ejecuta auth_telethon.py)."
+
+    client = TelegramClient(session_file, api_id, api_hash)
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            return "❌ Error: La sesión de Telethon no está autorizada. Vuelve a ejecutar auth_telethon.py en el servidor."
+
+        target_bot = "@CODESALL_BOT"
+        # Enviar comando al bot mayorista
+        sent_msg = await client.send_message(target_bot, f"/hbocode {email}")
+        sent_id = sent_msg.id
+        
+        # Esperar respuesta del bot (hasta 25 segundos)
+        start_time = time.time()
+        while time.time() - start_time < 25:
+            await asyncio.sleep(2)
+            messages = await client.get_messages(target_bot, limit=3)
+            for msg in messages:
+                # Comprobar que sea un mensaje posterior al que nosotros enviamos
+                if msg.id > sent_id and not msg.out:
+                    texto = msg.text or ""
+                    # Si el bot devolvió el código
+                    match = re.search(r'C[oó]digo:\s*`?([0-9]{4,8})`?', texto, re.IGNORECASE)
+                    if match:
+                        return f"🔑 Aquí tienes el código de Max:\n\n`{match.group(1)}`"
+                    
+                    # Si el bot devolvió error o aviso
+                    if "no se encontr" in texto.lower() or "sin c" in texto.lower() or "no registrado" in texto.lower() or "no pertenece" in texto.lower():
+                        return f"❌ {texto}"
+                    
+                    # Cualquier otro texto del bot que tenga dígitos
+                    match_dig = re.search(r'\b([0-9]{6})\b', texto)
+                    if match_dig:
+                        return f"🔑 Aquí tienes el código de Max:\n\n`{match_dig.group(1)}`"
+                    
+                    return f"ℹ️ Respuesta del proveedor:\n\n{texto}"
+
+        return "❌ Tiempo de espera agotado. @CODESALL_BOT no respondió en los últimos 25 segundos."
+    except Exception as e:
+        print(f"Error consultando @CODESALL_BOT con Telethon: {e}", flush=True)
+        return f"❌ Hubo un error de conexión con el bot mayorista: {str(e)}"
+    finally:
+        await client.disconnect()
 
 async def get_code_royplay(email: str, plataforma: str) -> str:
     async with async_playwright() as p:
@@ -1013,7 +1063,9 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if '+' in email_low and email_low.endswith('@gmail.com'):
             base_email = email_low.split('+')[0] + '@gmail.com'
 
-        if plataforma == 'netflix':
+        if plataforma in ['max', 'hbo']:
+            resultado = await get_code_max_botcodesall(email_low)
+        elif plataforma == 'netflix':
             if email_low in sdnet_emails:
                 resultado = await get_code_sdnetpanel(email_low, accion)
             else:
@@ -1160,7 +1212,9 @@ def run_web_server():
                 l_pass = scraping.get('pass')
                 l_url = scraping.get('url')
                 
-                if modo == 'panel_sdnet':
+                if plataforma in ['max', 'hbo']:
+                    resultado = await get_code_max_botcodesall(email)
+                elif modo == 'panel_sdnet':
                     resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
                 elif modo == 'panel_codeflix':
                     resultado = await get_code_codeflix(email, accion, l_user, l_pass)
