@@ -718,6 +718,35 @@ async def get_code_max_botcodesall(email: str) -> str:
     finally:
         await client.disconnect()
 
+async def get_code_wsp(email: str) -> str:
+    """Consulta códigos a través del microservicio de WhatsApp (Bot Garu Tv)."""
+    try:
+        url = "http://127.0.0.1:3001/api/wsp/get-code"
+        resp = await asyncio.to_thread(
+            lambda: requests.post(url, json={"email": email}, timeout=30)
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success") and data.get("codigo"):
+                return f"🔑 Aquí tienes el código de Netflix:\n\n`{data.get('codigo')}`"
+            elif not data.get("success") and data.get("error"):
+                return f"❌ {data.get('error')}"
+            else:
+                return f"ℹ️ Respuesta del Bot Garu:\n\n{data.get('raw', 'Sin código')}"
+        elif resp.status_code == 503:
+            return "❌ El bot de WhatsApp no está conectado actualmente en el servidor."
+        else:
+            try:
+                err_data = resp.json()
+                return f"❌ {err_data.get('error', 'Error en el bot de WhatsApp')}"
+            except:
+                return f"❌ Error de comunicación con WhatsApp (HTTP {resp.status_code})"
+    except requests.exceptions.Timeout:
+        return "❌ Tiempo de espera agotado. El bot de WhatsApp no respondió en 30 segundos."
+    except Exception as e:
+        print(f"Error llamando al microservicio WSP: {e}", flush=True)
+        return f"❌ No se pudo conectar con el microservicio de WhatsApp: {e}"
+
 async def get_code_royplay(email: str, plataforma: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1061,7 +1090,9 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         l_pass = scraping.get('pass')
         l_url = scraping.get('url')
 
-        if modo == 'panel_sdnet':
+        if modo in ['wsp_garu', 'bot_wsp']:
+            resultado = await get_code_wsp(email_low)
+        elif modo == 'panel_sdnet':
             resultado = await get_code_sdnetpanel(email_low, accion, l_user, l_pass)
         elif modo == 'panel_codeflix':
             resultado = await get_code_codeflix(email, accion, l_user, l_pass)
@@ -1078,6 +1109,7 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         gmail_passwords = cuentas_data.get("gmail_passwords", {})
         cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
         sdnet_emails = cuentas_data.get("sdnet_emails", [])
+        wsp_emails = cuentas_data.get("wsp_emails", [])
 
         base_email = email_low
         if '+' in email_low and email_low.endswith('@gmail.com'):
@@ -1086,7 +1118,9 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if plataforma in ['max', 'hbo']:
             resultado = await get_code_max_botcodesall(email_low)
         elif plataforma == 'netflix':
-            if email_low in sdnet_emails:
+            if email_low in wsp_emails:
+                resultado = await get_code_wsp(email_low)
+            elif email_low in sdnet_emails:
                 resultado = await get_code_sdnetpanel(email_low, accion)
             else:
                 resultado = await get_code_codeflix(email, accion)
@@ -1185,6 +1219,22 @@ async def add_cpanel(update, context):
     except:
         await update.message.reply_text("📝 Uso correcto: /add_cpanel correo@dominio.com password servidor.com")
 
+async def add_wsp(update, context):
+    if update.effective_user.id != 5190513736: return
+    try:
+        email = context.args[0].lower()
+        data = cargar_cuentas()
+        if "wsp_emails" not in data:
+            data["wsp_emails"] = []
+        if email not in data["wsp_emails"]:
+            data["wsp_emails"].append(email)
+            guardar_cuentas(data)
+            await update.message.reply_text(f"✅ {email} agregado a Bot WhatsApp (Garu Tv).")
+        else:
+            await update.message.reply_text("⚠️ El correo ya existía en la lista de WhatsApp.")
+    except:
+        await update.message.reply_text("📝 Uso correcto: /add_wsp correo@ejemplo.com")
+
 async def comandos(update, context):
     if update.effective_user.id != 5190513736: return
     texto = """
@@ -1201,12 +1251,13 @@ async def comandos(update, context):
 /historial - Descargar historial TXT
 
 ⚙️ Gestión de Cuentas (Correos):
+/add_wsp [correo] - Enruta a Bot WhatsApp (Garu Tv)
 /add_sdnet [correo] - Enruta a SDNetPanel (Acceso 1)
 /add_sdnet2 [correo] - Enruta a SDNetPanel (Acceso 2)
 /add_gmail [correo] [pass_app] - Agrega Gmail (IMAP)
 /add_cpanel [correo] [pass] [server] - Agrega cPanel (IMAP)
 
-Nota: Los correos que no agregues con estos comandos irán por defecto a CodeFlix.
+Nota: Los correos que no agregues con estos comandos irán por defecto a CodeFlix o según su proveedor en el sistema web.
 """
     await update.message.reply_text(texto)
 
@@ -1234,6 +1285,8 @@ def run_web_server():
                 
                 if plataforma in ['max', 'hbo']:
                     resultado = await get_code_max_botcodesall(email)
+                elif modo in ['wsp_garu', 'bot_wsp']:
+                    resultado = await get_code_wsp(email)
                 elif modo == 'panel_sdnet':
                     resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
                 elif modo == 'panel_codeflix':
@@ -1249,18 +1302,27 @@ def run_web_server():
                     cuentas_data = cargar_cuentas()
                     gmail_passwords = cuentas_data.get("gmail_passwords", {})
                     cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
+                    wsp_emails = cuentas_data.get("wsp_emails", [])
+                    sdnet_emails = cuentas_data.get("sdnet_emails", [])
                     
                     base_email = email
                     if '+' in email and email.endswith('@gmail.com'):
                         base_email = email.split('+')[0] + '@gmail.com'
 
-                    if base_email in gmail_passwords:
+                    if email in wsp_emails:
+                        resultado = await get_code_wsp(email)
+                    elif base_email in gmail_passwords:
                         resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
                     elif email in cpanel_accounts:
                         acc = cpanel_accounts[email]
                         resultado = await get_code_cpanel_imap(email, acc['pass'], acc['server'])
                     elif email.endswith('@mttplay.net') or email.endswith('@mttpe.com'):
                         resultado = await get_code_mttmail(email)
+                    elif plataforma == 'netflix':
+                        if email in sdnet_emails:
+                            resultado = await get_code_sdnetpanel(email, accion)
+                        else:
+                            resultado = await get_code_codeflix(email, accion)
                     else:
                         resultado = await get_code_royplay(email, plataforma)
             
@@ -1323,6 +1385,7 @@ def main():
     app.add_handler(CommandHandler("lista", lista_usuarios))
     app.add_handler(CommandHandler("stats", stats_uso))
     app.add_handler(CommandHandler("historial", ver_historial))
+    app.add_handler(CommandHandler("add_wsp", add_wsp))
     app.add_handler(CommandHandler("add_sdnet", add_sdnet))
     app.add_handler(CommandHandler("add_sdnet2", add_sdnet2))
     app.add_handler(CommandHandler("add_gmail", add_gmail))
