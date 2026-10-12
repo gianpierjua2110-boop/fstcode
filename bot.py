@@ -15,6 +15,7 @@ def fetch_laravel_credentials(email: str):
     try:
         response = requests.post(
             LARAVEL_API_URL, 
+            params={"correo": email},
             json={"correo": email},
             headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
             timeout=10
