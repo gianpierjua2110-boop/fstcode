@@ -315,13 +315,13 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         try:
-            # Login
-            panel_user = "Gianpierrre@gmail.com"
-            panel_pass = "Gianpierrre"
+            # Login dinámico o por defecto
+            panel_user = panel_user_param if panel_user_param else "Gianpierrre@gmail.com"
+            panel_pass = panel_pass_param if panel_pass_param else "Gianpierrre"
             
             # Cuentas que usan el segundo panel
             cuentas_panel_2 = ["stephaney_kv19021997@hotmail.com"]
-            if email.lower() in cuentas_panel_2:
+            if not panel_user_param and email.lower() in cuentas_panel_2:
                 panel_user = "Gianpierrre02@gmail.com"
                 
             await page.goto("https://sdnetpanel.com/login", timeout=30000)
@@ -335,14 +335,15 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             await page.wait_for_selector("text='Netflix'", timeout=20000)
             await page.locator("text='Netflix'").first.click()
             
-            # Mapeo de accion
-            if accion == 'login':
+            # Mapeo de accion (soporta nombres del bot y de la web)
+            accion_low = accion.lower()
+            if accion_low in ['login', 'login_4']:
                 opcion_text = 'Códigos de inicio de sesión'
-            elif accion == 'travel':
+            elif accion_low in ['travel', 'hogar_code']:
                 opcion_text = 'Tu código de acceso temporal'
-            elif accion == 'home':
+            elif accion_low in ['home', 'hogar_update']:
                 opcion_text = 'Actualizar Hogar'
-            elif accion == '6digits':
+            elif accion_low in ['6digits', 'login_6']:
                 opcion_text = 'Codigo de Verificacion de Inicio de seccion'
             else:
                 opcion_text = 'Códigos de inicio de sesión'
@@ -502,13 +503,14 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     email_text = tag_part + email.lower() + body_part
                     
                     # Validar que el tipo de mensaje coincida con la accion solicitada
-                    if accion == 'login' and 'login' not in tag_part:
+                    accion_low = accion.lower()
+                    if accion_low in ['login', 'login_4'] and 'login' not in tag_part:
                         continue
-                    if accion == '6digits' and 'otro' not in tag_part:
+                    if accion_low in ['6digits', 'login_6'] and 'otro' not in tag_part:
                         continue
-                    if accion == 'travel' and 'viaje' not in tag_part:
+                    if accion_low in ['travel', 'hogar_code'] and 'viaje' not in tag_part:
                         continue
-                    if accion == 'home' and 'hogar' not in tag_part:
+                    if accion_low in ['home', 'hogar_update'] and 'hogar' not in tag_part:
                         continue
                     
                     # Verificamos si es reciente
