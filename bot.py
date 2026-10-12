@@ -1075,13 +1075,30 @@ def run_web_server():
                     resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
                 elif modo == 'panel_codeflix':
                     resultado = await get_code_codeflix(email, accion, l_user, l_pass)
-                elif modo == 'imap' and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
+                elif modo == 'imap' and l_pass and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
                     resultado = await get_code_gmail(email, l_pass)
-                elif modo == 'imap':
+                elif modo == 'imap' and l_pass:
                     l_server = l_url if l_url else f"mail.{email.split('@')[1]}"
                     resultado = await get_code_cpanel_imap(email, l_pass, l_server)
                 else:
-                    resultado = await get_code_royplay(email, plataforma)
+                    # Fallback maestro con las credenciales locales de config_cuentas.json
+                    cuentas_data = cargar_cuentas()
+                    gmail_passwords = cuentas_data.get("gmail_passwords", {})
+                    cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
+                    
+                    base_email = email
+                    if '+' in email and email.endswith('@gmail.com'):
+                        base_email = email.split('+')[0] + '@gmail.com'
+
+                    if base_email in gmail_passwords:
+                        resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
+                    elif email in cpanel_accounts:
+                        acc = cpanel_accounts[email]
+                        resultado = await get_code_cpanel_imap(email, acc['pass'], acc['server'])
+                    elif email.endswith('@mttplay.net') or email.endswith('@mttpe.com'):
+                        resultado = await get_code_mttmail(email)
+                    else:
+                        resultado = await get_code_royplay(email, plataforma)
             
             # Enviar resultado de vuelta a Laravel
             callback_url = data.get("callback_url", "https://fstflix.com/api/bot/callback")
