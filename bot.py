@@ -1076,7 +1076,8 @@ def run_web_server():
                 elif modo == 'panel_codeflix':
                     resultado = await get_code_codeflix(email, accion, l_user, l_pass)
                 elif modo == 'imap' and l_pass and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
-                    resultado = await get_code_gmail(email, l_pass)
+                    base_gmail = email.split('+')[0] + '@gmail.com' if ('+' in email and email.endswith('@gmail.com')) else email
+                    resultado = await get_code_gmail(base_gmail, l_pass)
                 elif modo == 'imap' and l_pass:
                     l_server = l_url if l_url else f"mail.{email.split('@')[1]}"
                     resultado = await get_code_cpanel_imap(email, l_pass, l_server)
