@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = 3001;
-// Número del Bot Garu Tv en formato internacional JID de WhatsApp
+// JID del bot de WhatsApp proveedor
 const TARGET_BOT_JID = '51924746824@s.whatsapp.net';
 
 let sock = null;
@@ -15,6 +15,128 @@ let isConnected = false;
 
 // Mapa para gestionar solicitudes en espera: email -> resolve function
 const pendingRequests = new Map();
+
+function extractMessageText(msg) {
+    if (!msg) return '';
+    let m = msg.message || msg;
+    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+
+    return m.conversation || 
+           m.extendedTextMessage?.text || 
+           m.templateButtonReplyMessage?.selectedDisplayText || 
+           m.buttonsResponseMessage?.selectedDisplayText ||
+           m.listResponseMessage?.title ||
+           m.imageMessage?.caption ||
+           m.videoMessage?.caption ||
+           '';
+}
+
+function extractCodeOrPin(text) {
+    // 1. Coincidencia con CÓDIGO o PIN explícito (ej: 🔐 CÓDIGO: 266561 o 🔑 PIN: 7216)
+    const matchExplicit = text.match(/(?:C[ÓO]DIGO|PIN)\s*[:=-]?\s*([0-9]{4,8})/i);
+    if (matchExplicit) {
+        return matchExplicit[1];
+    }
+
+    // 2. Coincidencia con emojis de llave/candado seguidos de número
+    const matchEmoji = text.match(/(?:[🔐🔑])\s*([0-9]{4,8})/);
+    if (matchEmoji) {
+        return matchEmoji[1];
+    }
+
+    // 3. Fallback: buscar 6 dígitos si no es el año (evitar 2024, 2025, 2026, etc.)
+    const matchesAll = text.match(/\b([0-9]{6})\b/g);
+    if (matchesAll) {
+        for (const candidate of matchesAll) {
+            if (!['2024', '2025', '2026', '2027'].includes(candidate.substring(0, 4))) {
+                return candidate;
+            }
+        }
+    }
+
+    return null;
+}
+
+function isFromTargetBot(msg, text) {
+    if (msg.key?.fromMe) return false;
+
+    const remoteJid = msg.key?.remoteJid || '';
+    const participant = msg.key?.participant || '';
+
+    if (remoteJid.includes('51924746824') || participant.includes('51924746824')) {
+        return true;
+    }
+
+    // Marcadores característicos del formato del proveedor
+    const low = text.toLowerCase();
+    if (low.includes('buscando correo') || 
+        low.includes('código:') || 
+        low.includes('codigo:') || 
+        low.includes('pin:') || 
+        low.includes('hubo un error con este correo')) {
+        return true;
+    }
+
+    return false;
+}
+
+function processIncomingMessage(msg) {
+    if (!msg) return;
+    if (msg.key?.fromMe) return;
+
+    const text = extractMessageText(msg).trim();
+    if (!text) return;
+
+    if (!isFromTargetBot(msg, text)) return;
+
+    console.log(`[WSP RESPUESTA RECIBIDA]:\n${text}`);
+
+    // Si es el mensaje temporal de búsqueda, ignorarlo
+    if (text.toLowerCase().includes('buscando correo') || text.toLowerCase().includes('ok, buscando')) {
+        console.log('[WSP] Notificación de búsqueda en proceso (esperando resultado final)...');
+        return;
+    }
+
+    if (pendingRequests.size === 0) {
+        console.log('[WSP] No hay peticiones esperando esta respuesta.');
+        return;
+    }
+
+    const codigo = extractCodeOrPin(text);
+
+    for (const [email, resolver] of pendingRequests.entries()) {
+        const matchesEmail = text.toLowerCase().includes(email.toLowerCase());
+
+        // Si coincide el email o solo hay una petición pendiente en curso
+        if (matchesEmail || pendingRequests.size === 1) {
+            if (codigo) {
+                console.log(`[WSP] ✅ Código/PIN extraído: ${codigo} para ${email}`);
+                resolver({
+                    success: true,
+                    codigo: codigo,
+                    raw: text
+                });
+            } else {
+                console.log(`[WSP] ⚠️ Respuesta recibida sin código para ${email}`);
+                let errorMsg = text;
+                if (text.toLowerCase().includes('hubo un error con este correo')) {
+                    errorMsg = 'Hubo un error con este correo en el proveedor. Contacta a soporte.';
+                } else if (text.toLowerCase().includes('sin resultado') || text.toLowerCase().includes('no se encontr')) {
+                    errorMsg = 'Sin resultados ni códigos recientes para este correo.';
+                }
+                resolver({
+                    success: false,
+                    error: errorMsg
+                });
+            }
+            pendingRequests.delete(email);
+            break;
+        }
+    }
+}
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('wsp_auth_info');
@@ -51,82 +173,22 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Escuchar mensajes entrantes de WhatsApp
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    // Escuchar mensajes nuevos
+    sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
-            if (!msg.message) continue;
+            processIncomingMessage(msg);
+        }
+    });
 
-            const sender = msg.key.remoteJid || '';
-            // Solo nos interesan los mensajes que vienen del Bot Garu Tv
-            if (!sender.includes('51924746824')) continue;
-
-            // Extraer el texto del mensaje desenvolviendo mensajes anidados
-            let m = msg.message;
-            if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-            if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-            if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-
-            const text = m.conversation || 
-                         m.extendedTextMessage?.text || 
-                         m.templateButtonReplyMessage?.selectedDisplayText || 
-                         m.buttonsResponseMessage?.selectedDisplayText || '';
-
-            if (!text) continue;
-
-            // Ignorar el mensaje intermedio de "Ok, buscando correo..."
-            if (text.includes("Ok, buscando correo") || text.includes("buscando correo")) {
-                console.log(`[WSP] Mensaje intermedio de carga recibido: "${text.trim()}" (ignorando...)`);
-                continue;
-            }
-
-            console.log(`[WSP BOT RESPUESTA RECIBIDA]:\n${text}`);
-
-            // Buscar si hay una petición en espera que coincida
-            for (const [email, resolver] of pendingRequests.entries()) {
-                const matchesEmail = text.toLowerCase().includes(email.toLowerCase());
-                
-                // Si contiene el email o hay exactamente 1 solicitud pendiente
-                if (matchesEmail || pendingRequests.size === 1) {
-                    // Extraer CÓDIGO o PIN de la respuesta
-                    // Formato: 🔐 CÓDIGO: 266561 o 🔑 PIN: 7216 o 6 dígitos
-                    let match = text.match(/(?:C[ÓO]DIGO|PIN):\s*([0-9]{4,8})/i);
-                    let codigo = null;
-                    if (match) {
-                        codigo = match[1];
-                    } else {
-                        // Buscar cualquier bloque de 4 a 6 dígitos en el mensaje
-                        const fallbackDigits = text.match(/\b([0-9]{4,6})\b/);
-                        if (fallbackDigits) {
-                            codigo = fallbackDigits[1];
-                        }
-                    }
-
-                    if (codigo) {
-                        resolver({
-                            success: true,
-                            codigo: codigo,
-                            raw: text
-                        });
-                        pendingRequests.delete(email);
-                        break;
-                    } else if (text.toLowerCase().includes("no se encontr") || 
-                               text.toLowerCase().includes("sin c") || 
-                               text.toLowerCase().includes("no registrado") ||
-                               text.toLowerCase().includes("sin resultado")) {
-                        resolver({
-                            success: false,
-                            error: text.trim()
-                        });
-                        pendingRequests.delete(email);
-                        break;
-                    }
-                }
-            }
+    // Escuchar actualizaciones/descifrado posterior de mensajes
+    sock.ev.on('messages.update', async (updates) => {
+        for (const update of updates) {
+            processIncomingMessage(update);
         }
     });
 }
 
-// Endpoint HTTP para que el bot de Python o Laravel pidan el código
+// Endpoint HTTP para consultar código
 app.post('/api/wsp/get-code', async (req, res) => {
     const { email } = req.body;
     if (!email) {
@@ -140,13 +202,12 @@ app.post('/api/wsp/get-code', async (req, res) => {
     const emailNorm = email.toLowerCase().trim();
 
     try {
-        console.log(`[WSP] Enviando comando para: net ${emailNorm}`);
-        // Enviar el comando al Bot Garu Tv
+        console.log(`[WSP] Enviando comando: net ${emailNorm}`);
         await sock.sendMessage(TARGET_BOT_JID, { text: `net ${emailNorm}` });
 
-        // Esperar la respuesta (hasta 25 segundos)
+        // Esperar la respuesta (hasta 40 segundos)
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Tiempo de espera agotado (25s) sin respuesta de Bot Garu Tv.')), 25000)
+            setTimeout(() => reject(new Error('Tiempo de espera agotado (40s) sin respuesta del proveedor.')), 40000)
         );
 
         const responsePromise = new Promise((resolve) => {

@@ -719,11 +719,11 @@ async def get_code_max_botcodesall(email: str) -> str:
         await client.disconnect()
 
 async def get_code_wsp(email: str) -> str:
-    """Consulta códigos a través del microservicio de WhatsApp (Bot Garu Tv)."""
+    """Consulta códigos a través del microservicio de WhatsApp."""
     try:
         url = "http://127.0.0.1:3001/api/wsp/get-code"
         resp = await asyncio.to_thread(
-            lambda: requests.post(url, json={"email": email}, timeout=30)
+            lambda: requests.post(url, json={"email": email}, timeout=45)
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -732,17 +732,17 @@ async def get_code_wsp(email: str) -> str:
             elif not data.get("success") and data.get("error"):
                 return f"❌ {data.get('error')}"
             else:
-                return f"ℹ️ Respuesta del Bot Garu:\n\n{data.get('raw', 'Sin código')}"
+                return f"ℹ️ Respuesta del proveedor:\n\n{data.get('raw', 'Sin código')}"
         elif resp.status_code == 503:
-            return "❌ El bot de WhatsApp no está conectado actualmente en el servidor."
+            return "❌ El servicio de WhatsApp no está conectado actualmente en el servidor."
         else:
             try:
                 err_data = resp.json()
-                return f"❌ {err_data.get('error', 'Error en el bot de WhatsApp')}"
+                return f"❌ {err_data.get('error', 'Error en el servicio de WhatsApp')}"
             except:
                 return f"❌ Error de comunicación con WhatsApp (HTTP {resp.status_code})"
     except requests.exceptions.Timeout:
-        return "❌ Tiempo de espera agotado. El bot de WhatsApp no respondió en 30 segundos."
+        return "❌ Tiempo de espera agotado (45s). El proveedor no respondió a tiempo."
     except Exception as e:
         print(f"Error llamando al microservicio WSP: {e}", flush=True)
         return f"❌ No se pudo conectar con el microservicio de WhatsApp: {e}"
@@ -1229,7 +1229,7 @@ async def add_wsp(update, context):
         if email not in data["wsp_emails"]:
             data["wsp_emails"].append(email)
             guardar_cuentas(data)
-            await update.message.reply_text(f"✅ {email} agregado a Bot WhatsApp (Garu Tv).")
+            await update.message.reply_text(f"✅ {email} enrutado a Bot WhatsApp.")
         else:
             await update.message.reply_text("⚠️ El correo ya existía en la lista de WhatsApp.")
     except:
@@ -1251,7 +1251,7 @@ async def comandos(update, context):
 /historial - Descargar historial TXT
 
 ⚙️ Gestión de Cuentas (Correos):
-/add_wsp [correo] - Enruta a Bot WhatsApp (Garu Tv)
+/add_wsp [correo] - Enruta a Bot WhatsApp
 /add_sdnet [correo] - Enruta a SDNetPanel (Acceso 1)
 /add_sdnet2 [correo] - Enruta a SDNetPanel (Acceso 2)
 /add_gmail [correo] [pass_app] - Agrega Gmail (IMAP)
