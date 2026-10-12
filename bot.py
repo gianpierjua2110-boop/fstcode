@@ -728,9 +728,22 @@ async def get_code_wsp(email: str) -> str:
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success") and data.get("codigo"):
-                return f"🔑 Aquí tienes el código de Netflix:\n\n`{data.get('codigo')}`"
+                codigo = str(data.get("codigo", "")).strip()
+                tipo = data.get("tipo", "codigo")
+                if tipo == "link" or codigo.startswith("http://") or codigo.startswith("https://"):
+                    return f"🔗 Aquí tienes el enlace de confirmación:\n\n{codigo}"
+                else:
+                    return f"🔑 Aquí tienes el código de Netflix:\n\n`{codigo}`"
             elif not data.get("success") and data.get("error"):
-                return f"❌ {data.get('error')}"
+                raw_err = str(data.get("error", "")).strip()
+                # Safety net: verificar si contiene un link o código válido adentro
+                match_url = re.search(r'https?://[^\s<>"`]+', raw_err)
+                if match_url:
+                    return f"🔗 Aquí tienes el enlace de confirmación:\n\n{match_url.group(0)}"
+                match_pin = re.search(r'(?:C[ÓO]DIGO|PIN|CLAVE)\s*[:=-]?\s*[`*\'"\s]*([0-9]{4,8})', raw_err, re.IGNORECASE)
+                if match_pin:
+                    return f"🔑 Aquí tienes el código de Netflix:\n\n`{match_pin.group(1)}`"
+                return f"❌ {raw_err}"
             else:
                 return f"ℹ️ Respuesta del proveedor:\n\n{data.get('raw', 'Sin código')}"
         elif resp.status_code == 503:

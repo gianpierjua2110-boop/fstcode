@@ -34,25 +34,59 @@ function extractMessageText(msg) {
            '';
 }
 
-function extractCodeOrPin(text) {
-    // 1. Coincidencia con CÓDIGO o PIN explícito (ej: 🔐 CÓDIGO: 266561 o 🔑 PIN: 7216)
-    const matchExplicit = text.match(/(?:C[ÓO]DIGO|PIN)\s*[:=-]?\s*([0-9]{4,8})/i);
+function extractCodeOrLink(text) {
+    if (!text) return null;
+
+    // 1. Si contiene un enlace (ej. confirmación de hogar, viaje, o inicio de sesión de Netflix)
+    const matchUrl = text.match(/https?:\/\/[^\s<>"`]+/i);
+    if (matchUrl) {
+        return {
+            tipo: 'link',
+            valor: matchUrl[0].trim()
+        };
+    }
+
+    // 2. Coincidencia explícita con CÓDIGO, CODIGO, PIN o CLAVE (permitiendo comillas, backticks, asteriscos, espacios)
+    // Ej: 🔑 PIN: `3096` | 🔐 CÓDIGO: 266561 | CÓDIGO: `123456` | PIN: 7216
+    const matchExplicit = text.match(/(?:C[ÓO]DIGO|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
     if (matchExplicit) {
-        return matchExplicit[1];
+        return {
+            tipo: 'codigo',
+            valor: matchExplicit[1].trim()
+        };
     }
 
-    // 2. Coincidencia con emojis de llave/candado seguidos de número
-    const matchEmoji = text.match(/(?:[🔐🔑])\s*([0-9]{4,8})/);
+    // 3. Coincidencia con emojis de llave 🔑 o candado 🔐 seguidos de un número
+    const matchEmoji = text.match(/(?:[🔐🔑])\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/);
     if (matchEmoji) {
-        return matchEmoji[1];
+        return {
+            tipo: 'codigo',
+            valor: matchEmoji[1].trim()
+        };
     }
 
-    // 3. Fallback: buscar 6 dígitos si no es el año (evitar 2024, 2025, 2026, etc.)
-    const matchesAll = text.match(/\b([0-9]{6})\b/g);
-    if (matchesAll) {
-        for (const candidate of matchesAll) {
+    // 4. Bloques de 6 dígitos que no sean años (2024, 2025, 2026, 2027)
+    const matches6 = text.match(/\b([0-9]{6})\b/g);
+    if (matches6) {
+        for (const candidate of matches6) {
             if (!['2024', '2025', '2026', '2027'].includes(candidate.substring(0, 4))) {
-                return candidate;
+                return {
+                    tipo: 'codigo',
+                    valor: candidate.trim()
+                };
+            }
+        }
+    }
+
+    // 5. Bloques de 4 dígitos que no sean años (2024..2027)
+    const matches4 = text.match(/\b([0-9]{4})\b/g);
+    if (matches4) {
+        for (const candidate of matches4) {
+            if (!['2024', '2025', '2026', '2027'].includes(candidate)) {
+                return {
+                    tipo: 'codigo',
+                    valor: candidate.trim()
+                };
             }
         }
     }
@@ -105,18 +139,19 @@ function processIncomingMessage(msg) {
         return;
     }
 
-    const codigo = extractCodeOrPin(text);
+    const item = extractCodeOrLink(text);
 
     for (const [email, resolver] of pendingRequests.entries()) {
         const matchesEmail = text.toLowerCase().includes(email.toLowerCase());
 
         // Si coincide el email o solo hay una petición pendiente en curso
         if (matchesEmail || pendingRequests.size === 1) {
-            if (codigo) {
-                console.log(`[WSP] ✅ Código/PIN extraído: ${codigo} para ${email}`);
+            if (item) {
+                console.log(`[WSP] ✅ ${item.tipo.toUpperCase()} extraído: ${item.valor} para ${email}`);
                 resolver({
                     success: true,
-                    codigo: codigo,
+                    tipo: item.tipo,
+                    codigo: item.valor,
                     raw: text
                 });
             } else {
