@@ -8,7 +8,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 import requests
 
-LARAVEL_API_URL = "https://darkviolet-rat-754475.hostingersite.com/api/bot/credenciales"
+LARAVEL_API_URL = "https://fstflix.com/api/bot/credenciales"
 BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "fstflix_super_secret_bot_token_2026")
 
 def fetch_laravel_credentials(email: str):
@@ -1083,7 +1083,7 @@ def run_web_server():
                     resultado = await get_code_royplay(email, plataforma)
             
             # Enviar resultado de vuelta a Laravel
-            callback_url = data.get("callback_url", "https://darkviolet-rat-754475.hostingersite.com/api/bot/callback")
+            callback_url = data.get("callback_url", "https://fstflix.com/api/bot/callback")
             try:
                 requests.post(callback_url, json={"job_id": job_id, "resultado": resultado}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=15)
                 print(f"[API Web] Resultado enviado a Laravel para job {job_id}")
