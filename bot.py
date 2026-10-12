@@ -504,13 +504,15 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     
                     # Validar que el tipo de mensaje coincida con la accion solicitada
                     accion_low = accion.lower()
-                    if accion_low in ['login', 'login_4'] and 'login' not in tag_part:
+                    if accion_low in ['login', 'login_4']:
+                        # Si tiene etiquetas opuestas claras (como viaje o hogar), omitir
+                        if any(opuesto in tag_part for opuesto in ['viaje', 'hogar']):
+                            continue
+                    elif accion_low in ['6digits', 'login_6'] and 'otro' not in tag_part and '6' not in tag_part:
                         continue
-                    if accion_low in ['6digits', 'login_6'] and 'otro' not in tag_part:
+                    elif accion_low in ['travel', 'hogar_code'] and 'viaje' not in tag_part:
                         continue
-                    if accion_low in ['travel', 'hogar_code'] and 'viaje' not in tag_part:
-                        continue
-                    if accion_low in ['home', 'hogar_update'] and 'hogar' not in tag_part:
+                    elif accion_low in ['home', 'hogar_update'] and 'hogar' not in tag_part:
                         continue
                     
                     # Verificamos si es reciente
