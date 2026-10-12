@@ -9,7 +9,28 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import requests
 
 LARAVEL_API_URL = "https://fstflix.com/api/bot/credenciales"
+LARAVEL_AUTH_URL = "https://fstflix.com/api/bot/verificar-acceso"
 BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "fstflix_super_secret_bot_token_2026")
+
+def check_telegram_access(telegram_id: int, email: str, plataforma: str):
+    try:
+        response = requests.post(
+            LARAVEL_AUTH_URL,
+            json={
+                "telegram_id": str(telegram_id),
+                "correo": email,
+                "plataforma": plataforma
+            },
+            headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code in [400, 403, 404]:
+            return response.json()
+    except Exception as e:
+        print(f"Error verificando acceso en Laravel: {e}")
+    return {"success": False, "message": "No se pudo conectar con el servidor para validar tus accesos."}
 
 def fetch_laravel_credentials(email: str):
     try:
@@ -38,12 +59,31 @@ CHOOSING_PLATFORM, CHOOSING_ACTION, TYPING_EMAIL = range(3)
 
 
 def is_allowed(user_id: int) -> bool:
+    if user_id == 5190513736:
+        return True
     try:
         with open("usuarios_permitidos.txt", "r") as f:
             allowed = [int(line.strip()) for line in f if line.strip().isdigit()]
+        if user_id in allowed:
+            return True
     except FileNotFoundError:
-        allowed = [5190513736]
-    return user_id in allowed
+        pass
+    # Si no está en el txt local, consultar en la base de datos de Laravel si el Telegram ID existe
+    try:
+        res = requests.post(
+            LARAVEL_AUTH_URL,
+            json={"telegram_id": str(user_id)},
+            headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
+            timeout=5
+        )
+        if res.status_code in [200, 403]:
+            data = res.json()
+            # Si el endpoint reconoció el ID de Telegram (aunque no haya enviado correo aún), permitimos /start
+            if data.get("cliente") or "no tienes ninguna" in data.get("message", "").lower():
+                return True
+    except Exception as e:
+        print(f"Error consultando is_allowed en Laravel: {e}")
+    return False
 
 
 
@@ -928,40 +968,67 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except:
         pass
         
+    # 1. Validación de autorización de acceso en la Web por Telegram ID
+    telegram_id = update.effective_user.id
+    auth_check = check_telegram_access(telegram_id, email, plataforma)
+    if not auth_check.get("success"):
+        error_msg = auth_check.get("message", "⛔ No tienes autorización para solicitar códigos de esta cuenta.")
+        await update.message.reply_text(f"⛔ *Acceso Denegado*\n\n{error_msg}", parse_mode='Markdown')
+        return ConversationHandler.END
+
     msg = await update.message.reply_text("Buscando tu respuesta en la plataforma, espera unos segundos... ⏳")
     
     email_low = email.lower()
     
-    # 🧠 Mapeo maestro de contraseñas
-    cuentas_data = cargar_cuentas()
-    gmail_passwords = cuentas_data.get("gmail_passwords", {})
-    cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
-    sdnet_emails = cuentas_data.get("sdnet_emails", [])
+    # Intentar obtener configuración dinámica de scraping desde Laravel
+    laravel_data = fetch_laravel_credentials(email_low)
+    resultado = None
 
+    if laravel_data and laravel_data.get('success'):
+        scraping = laravel_data.get('scraping', {})
+        modo = scraping.get('modo')
+        l_user = scraping.get('user')
+        l_pass = scraping.get('pass')
+        l_url = scraping.get('url')
 
-    # Filtro de Alias Automatico para correos
-    base_email = email_low
-    if '+' in email_low and email_low.endswith('@gmail.com'):
-        base_email = email_low.split('+')[0] + '@gmail.com'
+        if modo == 'panel_sdnet':
+            resultado = await get_code_sdnetpanel(email_low, accion, l_user, l_pass)
+        elif modo == 'panel_codeflix':
+            resultado = await get_code_codeflix(email, accion, l_user, l_pass)
+        elif modo == 'imap' and l_pass and ('gmail' in str(l_user).lower() or 'gmail' in email_low):
+            base_gmail = email_low.split('+')[0] + '@gmail.com' if ('+' in email_low and email_low.endswith('@gmail.com')) else email_low
+            resultado = await get_code_gmail(base_gmail, l_pass)
+        elif modo == 'imap' and l_pass:
+            l_server = l_url if l_url else f"mail.{email_low.split('@')[1]}"
+            resultado = await get_code_cpanel_imap(email_low, l_pass, l_server)
 
-    if plataforma == 'netflix':
+    # Fallback si Laravel no tenía credenciales específicas
+    if not resultado:
+        cuentas_data = cargar_cuentas()
+        gmail_passwords = cuentas_data.get("gmail_passwords", {})
+        cpanel_accounts = cuentas_data.get("cpanel_accounts", {})
+        sdnet_emails = cuentas_data.get("sdnet_emails", [])
 
-        if email_low in sdnet_emails:
-            resultado = await get_code_sdnetpanel(email_low, accion)
+        base_email = email_low
+        if '+' in email_low and email_low.endswith('@gmail.com'):
+            base_email = email_low.split('+')[0] + '@gmail.com'
+
+        if plataforma == 'netflix':
+            if email_low in sdnet_emails:
+                resultado = await get_code_sdnetpanel(email_low, accion)
+            else:
+                resultado = await get_code_codeflix(email, accion)
+        elif plataforma == 'prime':
+            resultado = await get_code_royplay(email, plataforma)
+        elif plataforma == 'disney' and email_low in cpanel_accounts:
+            acc = cpanel_accounts[email_low]
+            resultado = await get_code_cpanel_imap(email_low, acc['pass'], acc['server'])
+        elif plataforma == 'disney' and base_email in gmail_passwords:
+            resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
+        elif email_low.endswith('@mttplay.net') or email_low.endswith('@mttpe.com'):
+            resultado = await get_code_mttmail(email_low)
         else:
-            resultado = await get_code_codeflix(email, accion)
-    elif plataforma == 'prime':
-        resultado = await get_code_royplay(email, plataforma)
-    elif plataforma == 'disney' and email_low in cpanel_accounts:
-        acc = cpanel_accounts[email_low]
-        resultado = await get_code_cpanel_imap(email_low, acc['pass'], acc['server'])
-    elif plataforma == 'disney' and base_email in gmail_passwords:
-        # El bot va directo al Gmail base usando la contraseña exacta
-        resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
-    elif email_low.endswith('@mttplay.net') or email_low.endswith('@mttpe.com'):
-        resultado = await get_code_mttmail(email_low)
-    else:
-        resultado = await get_code_royplay(email, plataforma)
+            resultado = await get_code_royplay(email, plataforma)
     
     if resultado.startswith("SCREENSHOT:"):
         path = resultado.split("SCREENSHOT:")[1]
