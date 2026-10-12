@@ -643,6 +643,12 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
 
             return "❌ No se encontró ningún código reciente en la bandeja de entrada. Por favor, solicita reenviar el código en la pantalla y vuelve a intentarlo en unos segundos."
             
+        except Exception as e:
+            print(f"Error CodeFlix: {e}", flush=True)
+            return f"❌ Hubo un error de conexión con la plataforma CodeFlix. DETALLE TÉCNICO: {str(e)}"
+        finally:
+            await browser.close()
+
 async def get_code_max_botcodesall(email: str) -> str:
     """Consulta códigos de Max / HBO directamente al bot @CODESALL_BOT mediante Telethon."""
     from telethon import TelegramClient
