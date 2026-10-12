@@ -316,8 +316,8 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
         page = await browser.new_page()
         try:
             # Login dinámico o por defecto
-            panel_user = panel_user_param if panel_user_param else "Gianpierrre@gmail.com"
-            panel_pass = panel_pass_param if panel_pass_param else "Gianpierrre"
+            panel_user = panel_user_param if (panel_user_param and str(panel_user_param).strip()) else "Gianpierrre@gmail.com"
+            panel_pass = panel_pass_param if (panel_pass_param and str(panel_pass_param).strip()) else "Gianpierrre"
             
             # Cuentas que usan el segundo panel
             cuentas_panel_2 = ["stephaney_kv19021997@hotmail.com"]
