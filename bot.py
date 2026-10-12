@@ -672,32 +672,41 @@ async def get_code_max_botcodesall(email: str) -> str:
         sent_msg = await client.send_message(target_bot, f"/hbocode {email}")
         sent_id = sent_msg.id
         
-        # Esperar respuesta del bot (hasta 25 segundos)
+        # Esperar respuesta del bot (hasta 30 segundos)
         start_time = time.time()
-        while time.time() - start_time < 25:
+        while time.time() - start_time < 30:
             await asyncio.sleep(2)
             messages = await client.get_messages(target_bot, limit=3)
             for msg in messages:
                 # Comprobar que sea un mensaje posterior al que nosotros enviamos
                 if msg.id > sent_id and not msg.out:
-                    texto = msg.text or ""
-                    # Si el bot devolvió el código
+                    texto = (msg.text or "").strip()
+                    
+                    # 1. Si es el mensaje temporal de barra de progreso [■□□□□□□□□□] o carga, ignorar y seguir esperando
+                    if any(c in texto for c in ['■', '□', '░', '▒', '▓', '⏳', 'Buscando', 'Cargando', 'consultando']):
+                        continue
+                    if texto.startswith('[') and texto.endswith(']') and len(texto) < 25:
+                        continue
+                    
+                    # 2. Si el bot devolvió el código
                     match = re.search(r'C[oó]digo:\s*`?([0-9]{4,8})`?', texto, re.IGNORECASE)
                     if match:
                         return f"🔑 Aquí tienes el código de Max:\n\n`{match.group(1)}`"
                     
-                    # Si el bot devolvió error o aviso
-                    if "no se encontr" in texto.lower() or "sin c" in texto.lower() or "no registrado" in texto.lower() or "no pertenece" in texto.lower():
-                        return f"❌ {texto}"
+                    # 3. Si el bot devolvió error o aviso
+                    if any(err_kw in texto.lower() for err_kw in [
+                        "no se encontr", "sin c", "no registrado", "no pertenece", "venci", "expir"
+                    ]) or texto.startswith("❌"):
+                        return f"❌ {texto.replace('❌', '').strip()}"
                     
-                    # Cualquier otro texto del bot que tenga dígitos
+                    # 4. Cualquier otro texto del bot que tenga un código de 6 dígitos
                     match_dig = re.search(r'\b([0-9]{6})\b', texto)
                     if match_dig:
                         return f"🔑 Aquí tienes el código de Max:\n\n`{match_dig.group(1)}`"
                     
                     return f"ℹ️ Respuesta del proveedor:\n\n{texto}"
 
-        return "❌ Tiempo de espera agotado. @CODESALL_BOT no respondió en los últimos 25 segundos."
+        return "❌ Tiempo de espera agotado. @CODESALL_BOT no respondió en los últimos 30 segundos."
     except Exception as e:
         print(f"Error consultando @CODESALL_BOT con Telethon: {e}", flush=True)
         return f"❌ Hubo un error de conexión con el bot mayorista: {str(e)}"
