@@ -498,8 +498,8 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                 texto_correo_valido = ""
                 
                 for i in range(1, len(blocks)):
-                    tag_part = blocks[i-1][-20:]
-                    body_part = blocks[i][:300]
+                    tag_part = blocks[i-1][-80:]
+                    body_part = blocks[i][:400]
                     email_text = tag_part + email.lower() + body_part
                     
                     # Validar que el tipo de mensaje coincida con la accion solicitada
@@ -540,16 +540,17 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     continue
                 
                 # Dependiendo de la accion extraemos del correo válido que encontramos
-                if accion == '6digits':
+                accion_norm = accion.lower()
+                if accion_norm in ['6digits', 'login_6']:
                     matches = re.findall(r'\b(\d{6})\b', texto_correo_valido)
                     if matches:
                         return f"🔑 Aquí tienes el código de 6 dígitos:\n\n`{matches[0]}`"
-                elif accion == 'login':
+                elif accion_norm in ['login', 'login_4']:
                     matches = re.findall(r'\b(\d{4})\b', texto_correo_valido)
                     matches = [m for m in matches if m not in ("2023", "2024", "2025", "2026", "2027", "2028")]
                     if matches:
                         return f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{matches[0]}`"
-                elif accion in ('travel', 'home'):
+                elif accion_norm in ('travel', 'home', 'hogar_code', 'hogar_update'):
                     # También extraemos todos los enlaces
                     hrefs = []
                     try:
@@ -579,6 +580,12 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     for href in hrefs:
                         if 'update-primary-location' in href or 'travel' in href or 'account' in href:
                             return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                else:
+                    # Si no coincide con ninguna acción específica, intentar extraer cualquier código
+                    matches = re.findall(r'\b(\d{4,6})\b', texto_correo_valido)
+                    matches = [m for m in matches if m not in ("2023", "2024", "2025", "2026", "2027", "2028")]
+                    if matches:
+                        return f"🔑 Aquí tienes el código extraído:\n\n`{matches[0]}`"
                             
             return f"❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos. DEBUG Bandeja (primeros 200 chars): {texto_bandeja[:200]}"
             
