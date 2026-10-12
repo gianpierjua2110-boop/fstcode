@@ -496,6 +496,8 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                 # Iteramos por TODOS los correos cargados para este email
                 correo_valido_encontrado = False
                 texto_correo_valido = ""
+                hubo_correo_antiguo = False
+                minutos_antiguo = None
                 
                 for i in range(1, len(blocks)):
                     tag_part = blocks[i-1][-80:]
@@ -520,8 +522,13 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     es_reciente = False
                     import re as rx
                     if tiempos_min:
-                        if int(tiempos_min[0]) <= 15:
+                        minutos = int(tiempos_min[0])
+                        if minutos <= 15:
                             es_reciente = True
+                        else:
+                            hubo_correo_antiguo = True
+                            if minutos_antiguo is None or minutos < minutos_antiguo:
+                                minutos_antiguo = minutos
                     elif "justo ahora" in email_text or "segundos" in email_text:
                         es_reciente = True
                     elif "hace 1 min" in email_text or "hace 2 min" in email_text:
@@ -589,7 +596,11 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                     if matches:
                         return f"🔑 Aquí tienes el código extraído:\n\n`{matches[0]}`"
                             
-            return f"❌ Tiempo de espera agotado. No se encontró el código en la Bandeja tras 45 segundos. DEBUG Bandeja (primeros 200 chars): {texto_bandeja[:200]}"
+            if hubo_correo_antiguo:
+                tiempo_str = f"hace {minutos_antiguo} min" if minutos_antiguo else "hace más de 15 minutos"
+                return f"❌ El último código registrado llegó {tiempo_str} y ya no es válido (máximo 15 min). Por favor, solicita reenviar el código en tu pantalla o televisor y vuelve a consultar."
+
+            return "❌ No se encontró ningún código reciente en la bandeja de entrada. Por favor, solicita reenviar el código en la pantalla y vuelve a intentarlo en unos segundos."
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
