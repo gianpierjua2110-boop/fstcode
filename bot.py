@@ -1160,6 +1160,25 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     else:
         await update.message.reply_text(f"✅ ¡Respuesta obtenida!\n\n{resultado}")
         await msg.delete()
+
+    # Registrar solicitud en Laravel para el historial del panel
+    try:
+        t_user = update.effective_user.username or update.effective_user.first_name or "Desconocido"
+        requests.post(
+            "https://fstflix.com/api/bot/registrar-solicitud",
+            json={
+                "telegram_id": str(update.effective_user.id),
+                "telegram_user": str(t_user),
+                "correo": email,
+                "plataforma": plataforma,
+                "accion": accion or "",
+                "resultado": resultado
+            },
+            headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
+            timeout=5
+        )
+    except Exception as ex:
+        print(f"Error registrando solicitud en Laravel: {ex}", flush=True)
         
     return ConversationHandler.END
 
