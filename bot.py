@@ -695,9 +695,14 @@ async def get_code_max_botcodesall(email: str) -> str:
                     
                     # 3. Si el bot devolvió error o aviso
                     if any(err_kw in texto.lower() for err_kw in [
-                        "no se encontr", "sin c", "no registrado", "no pertenece", "venci", "expir"
+                        "sin resultados", "no se encontr", "sin c", "no registrado", "no pertenece", "venci", "expir"
                     ]) or texto.startswith("❌"):
-                        return f"❌ {texto.replace('❌', '').strip()}"
+                        # Limpiar barras de progreso tipo [■■■■■■■■■■] o `[■■■■■■■■■■]` 100%, asteriscos, guiones bajos
+                        msg_limpio = re.sub(r'[`\[][■\/\s#\-—]+[`\]]', '', texto)
+                        msg_limpio = re.sub(r'\d+%', '', msg_limpio)
+                        msg_limpio = re.sub(r'\*\*HBO\*\*\s*—?', '', msg_limpio, flags=re.IGNORECASE)
+                        msg_limpio = msg_limpio.replace('*', '').replace('_', '').replace('`', '').replace('❌', '').replace('—', '').strip()
+                        return f"❌ {msg_limpio}"
                     
                     # 4. Cualquier otro texto del bot que tenga un código de 6 dígitos
                     match_dig = re.search(r'\b([0-9]{6})\b', texto)
