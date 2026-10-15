@@ -57,9 +57,13 @@ ROYPLAY_CODE = "GIANPI4869"
 
 CHOOSING_PLATFORM, CHOOSING_ACTION, TYPING_EMAIL = range(3)
 
+ADMIN_ID = int(os.getenv("TELEGRAM_ADMIN_ID", "5190513736"))
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
 
 def is_allowed(user_id: int) -> bool:
-    if user_id == 5190513736:
+    if is_admin(user_id):
         return True
     try:
         with open("usuarios_permitidos.txt", "r") as f:
@@ -285,9 +289,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
         [InlineKeyboardButton("Netflix", callback_data="plat_netflix")],
         [InlineKeyboardButton("Disney", callback_data="plat_disney")],
-        [InlineKeyboardButton("Prime", callback_data="plat_prime")],
-        [InlineKeyboardButton("Max (HBO)", callback_data="plat_max")]
     ]
+    if is_admin(update.effective_user.id):
+        keyboard.append([InlineKeyboardButton("Prime", callback_data="plat_prime")])
+    keyboard.append([InlineKeyboardButton("Max (HBO)", callback_data="plat_max")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
         await update.message.reply_text("¡Hola! Selecciona la plataforma que deseas ver:", reply_markup=reply_markup)
@@ -299,6 +305,11 @@ async def platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     await query.answer()
     plataforma = query.data.split('_')[1]
+
+    if plataforma == 'prime' and not is_admin(update.effective_user.id):
+        await query.answer("⛔ Prime Video solo está disponible para el administrador.", show_alert=True)
+        return CHOOSING_PLATFORM
+
     context.user_data['plataforma'] = plataforma
 
     if plataforma == 'netflix':
@@ -309,7 +320,6 @@ async def platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             
         keyboard.extend([
             [InlineKeyboardButton("Estoy de viaje", callback_data="act_travel")],
-            [InlineKeyboardButton("Actualizar hogar", callback_data="act_home")],
             [InlineKeyboardButton("Código de 6 dígitos", callback_data="act_6digits")],
             [InlineKeyboardButton("🔙 Volver", callback_data="back_to_start")]
         ])
@@ -336,7 +346,9 @@ async def action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
     accion = query.data.split('_')[1]
     
-    # El acceso de inicio de sesión ahora es público para la lista blanca
+    if accion == 'home':
+        await query.answer("⛔ La opción de actualizar hogar se encuentra deshabilitada.", show_alert=True)
+        return CHOOSING_ACTION
         
     context.user_data['accion'] = accion
     
