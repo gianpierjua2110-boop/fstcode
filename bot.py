@@ -12,14 +12,16 @@ LARAVEL_API_URL = "https://fstflix.com/api/bot/credenciales"
 LARAVEL_AUTH_URL = "https://fstflix.com/api/bot/verificar-acceso"
 BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "fstflix_super_secret_bot_token_2026")
 
-def check_telegram_access(telegram_id: int, email: str, plataforma: str):
+def check_telegram_access(telegram_id: int, email: str, plataforma: str, accion: str = None, telegram_user: str = None):
     try:
         response = requests.post(
             LARAVEL_AUTH_URL,
             json={
                 "telegram_id": str(telegram_id),
+                "telegram_user": str(telegram_user or ""),
                 "correo": email,
-                "plataforma": plataforma
+                "plataforma": plataforma,
+                "accion": accion or ""
             },
             headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
             timeout=10
@@ -277,7 +279,14 @@ def check_15_mins(texto: str) -> tuple[bool, str]:
     except:
         return True, ""
 
+def is_valid_email(text: str) -> bool:
+    if not text or len(text) > 254:
+        return False
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    return bool(re.match(pattern, text.strip()))
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
     if not is_allowed(update.effective_user.id):
         msg = "⛔ No tienes autorización para usar este bot."
         if update.message:
@@ -423,6 +432,8 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             start_time = time.time()
             found_result = None
             
+            is_link_action = accion_low in ['travel', 'hogar_code', 'home', 'hogar_update']
+            
             while time.time() - start_time < 60: # Esperar máximo 60 segundos
                 await page.wait_for_timeout(2000)
                 
@@ -432,59 +443,179 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
                 else:
                     texto = await page.locator("body").inner_text()
 
+                texto_lower = (texto or "").lower()
+
+                # Detectar si el correo corresponde a viaje o actualizar hogar
+                is_travel_or_home = (
+                    is_link_action 
+                    or 'obtener código' in texto_lower 
+                    or 'obtener codigo' in texto_lower
+                    or 'acceso temporal' in texto_lower
+                    or 'actualizar hogar' in texto_lower
+                    or 'código de acceso' in texto_lower
+                    or 'codigo de acceso' in texto_lower
+                )
+
+                # --- 1. EXTRACCIÓN DE ENLACES PRIORITARIA (VIAJE / ACTUALIZAR HOGAR) ---
+                if is_travel_or_home:
+                    link_extraido = None
+                    
+                    # Buscar evaluando en el DOM del modal y de todos los frames/iframes
+                    for frame in page.frames:
+                        try:
+                            res = await frame.evaluate("""() => {
+                                const isNetflixTravelOrHome = (href) => {
+                                    if (!href) return false;
+                                    const h = href.toLowerCase();
+                                    // DEBE ser de netflix.com
+                                    if (!h.includes('netflix.com')) return false;
+                                    // PROHIBIDO paneles o dashboards
+                                    if (h.includes('sdnetpanel') || h.includes('codeflix') || h.includes('dashboard')) return false;
+                                    const ignoreList = ['help.netflix.com', 'termsofuse', 'privacy', '/browse', 'netflix.com/es/', 'netflix.com/en/'];
+                                    if (ignoreList.some(ign => h.includes(ign))) return false;
+                                    return true;
+                                };
+
+                                // 1. Buscar directamente enlaces <a> con texto de 'Obtener código' o 'Actualizar hogar'
+                                const allLinks = Array.from(document.querySelectorAll('a'));
+                                for (const a of allLinks) {
+                                    const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
+                                    if (txt.includes('obtener c\u00f3digo') || txt.includes('obtener codigo') || txt.includes('obtener el c\u00f3digo') || txt.includes('obtener el codigo') || txt.includes('get code')) {
+                                        if (isNetflixTravelOrHome(a.href)) return { href: a.href, tipo: 'travel' };
+                                    }
+                                    if (txt.includes('actualizar hogar') || txt.includes('s\u00ed, la envi\u00e9 yo') || txt.includes('si, la envie yo') || txt.includes('confirmar actualizaci\u00f3n')) {
+                                        if (isNetflixTravelOrHome(a.href)) return { href: a.href, tipo: 'home' };
+                                    }
+                                }
+
+                                // 2. Buscar en botones, contenedores o spans con el texto del botón que envuelvan un enlace de Netflix
+                                const allElements = Array.from(document.querySelectorAll('button, [role="button"], span, div, td, b, strong, p'));
+                                for (const el of allElements) {
+                                    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                    if (txt === 'obtener c\u00f3digo' || txt === 'obtener codigo' || txt === 'obtener el c\u00f3digo' || txt === 'obtener el codigo' || txt.includes('obtener c\u00f3digo') || txt.includes('obtener codigo')) {
+                                        const parentA = el.closest('a');
+                                        if (parentA && isNetflixTravelOrHome(parentA.href)) return { href: parentA.href, tipo: 'travel' };
+                                        const childA = el.querySelector('a');
+                                        if (childA && isNetflixTravelOrHome(childA.href)) return { href: childA.href, tipo: 'travel' };
+                                        if (el.tagName === 'A' && isNetflixTravelOrHome(el.href)) return { href: el.href, tipo: 'travel' };
+                                    }
+                                    if (txt.includes('actualizar hogar') || txt.includes('s\u00ed, la envi\u00e9 yo') || txt.includes('si, la envie yo')) {
+                                        const parentA = el.closest('a');
+                                        if (parentA && isNetflixTravelOrHome(parentA.href)) return { href: parentA.href, tipo: 'home' };
+                                        const childA = el.querySelector('a');
+                                        if (childA && isNetflixTravelOrHome(childA.href)) return { href: childA.href, tipo: 'home' };
+                                        if (el.tagName === 'A' && isNetflixTravelOrHome(el.href)) return { href: el.href, tipo: 'home' };
+                                    }
+                                }
+
+                                // 3. Buscar enlaces de Netflix con tokens específicos
+                                for (const a of allLinks) {
+                                    const href = a.href || '';
+                                    if (isNetflixTravelOrHome(href)) {
+                                        if (href.includes('travel') || href.includes('verify')) {
+                                            return { href: href, tipo: 'travel' };
+                                        }
+                                        if (href.includes('update-primary-location')) {
+                                            return { href: href, tipo: 'home' };
+                                        }
+                                        if (href.includes('nftoken')) {
+                                            return { href: href, tipo: 'token' };
+                                        }
+                                    }
+                                }
+                                return null;
+                            }""")
+                            if res and res.get('href'):
+                                link_extraido = res
+                                break
+                        except Exception:
+                            pass
+
+                    # Fallback general de enlaces: EXCLUSIVAMENTE para netflix.com
+                    if not link_extraido:
+                        hrefs = []
+                        for frame in page.frames:
+                            try:
+                                f_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
+                                if f_hrefs: hrefs.extend(f_hrefs)
+                            except:
+                                pass
+                        try:
+                            html_content = await page.content()
+                            for frame in page.frames:
+                                try: html_content += "\n" + await frame.content()
+                                except: pass
+                            import re as regex_mod
+                            netflix_matches = regex_mod.findall(r'https?://[^\s"\'<>]*netflix\.com[^\s"\'<>]*', html_content)
+                            hrefs.extend(netflix_matches)
+                        except:
+                            pass
+
+                        ignore_list = ['help.netflix.com', 'termsofuse', 'privacy', '/browse', 'netflix.com/es/', 'netflix.com/en/', 'sdnetpanel', 'codeflix', 'dashboard']
+                        for h in hrefs:
+                            h_low = h.lower()
+                            if 'netflix.com' in h_low and ('travel' in h_low or 'update-primary-location' in h_low or 'nftoken' in h_low or 'verify' in h_low):
+                                if not any(ign in h_low for ign in ignore_list):
+                                    tipo = 'travel' if ('travel' in h_low or 'nftoken' in h_low or 'verify' in h_low) else 'home'
+                                    link_extraido = {'href': h, 'tipo': tipo}
+                                    break
+
+                        if not link_extraido:
+                            for h in hrefs:
+                                h_low = h.lower()
+                                if 'netflix.com' in h_low and not any(ign in h_low for ign in ignore_list):
+                                    link_extraido = {'href': h, 'tipo': 'travel' if is_link_action else 'general'}
+                                    break
+
+                    if link_extraido and link_extraido.get('href'):
+                        url_final = link_extraido['href'].strip()
+                        url_low = url_final.lower()
+                        # Doble filtro estricto de seguridad: NUNCA enviar enlaces que no sean de netflix.com ni enlaces de paneles
+                        if 'netflix.com' not in url_low or any(p in url_low for p in ['sdnetpanel', 'codeflix', 'dashboard', 'localhost', 'fstflix']):
+                            link_extraido = None
+                            continue
+
+                        tipo_link = link_extraido.get('tipo', 'travel')
+                        if accion_low in ['travel', 'hogar_code'] or tipo_link == 'travel':
+                            found_result = f"🔗 Aquí tienes el enlace de Netflix para tu código de viaje:\n\n{url_final}"
+                        else:
+                            found_result = f"🏠 Aquí tienes el enlace de Netflix:\n\n{url_final}"
+                        break
+
+                    # En solicitudes de viaje/hogar, NO extraer números del correo, continuar polling
+                    continue
+
+                # --- 2. EXTRACCIÓN DE CÓDIGOS (LOGIN O 6 DÍGITOS) ---
                 import re
-                
+
                 # Buscar código de 6 dígitos
                 matches_6 = re.findall(r'\b\d\s*\d\s*\d\s*\d\s*\d\s*\d\b', texto)
-                if matches_6:
+                if matches_6 and (accion_low in ['6digits', 'login_6'] or not accion_low):
                     codigo = matches_6[0].replace(" ", "")
                     found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
                     break
-                    
-                # Buscar código de 4 dígitos (excluyendo años comunes del texto)
-                matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
-                for m in matches_4:
-                    codigo = m.replace(" ", "")
-                    if codigo not in ("2023", "2024", "2025", "2026", "2027", "2028"):
-                        found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
-                        break
-                
-                if found_result:
-                    break
-                    
-                # Si la acción fue Actualizar Hogar y Netflix envió un botón/enlace en lugar de un código
-                if accion != 'login':
-                    hrefs = []
-                    for frame in page.frames:
-                        try:
-                            frame_hrefs = await frame.evaluate("() => Array.from(document.querySelectorAll('a')).map(a => a.href)")
-                            hrefs.extend(frame_hrefs)
-                        except:
-                            pass
-                    
-                    try:
-                        html_content = await page.content()
-                        for frame in page.frames:
-                            try: html_content += await frame.content()
-                            except: pass
-                        
-                        import re as regex_mod
-                        regex_urls = regex_mod.findall(r'https?://[^\s"\'<>]+', html_content)
-                        hrefs.extend(regex_urls)
-                    except:
-                        pass
 
-                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
-                    
-                    for href in hrefs:
-                        if 'netflix.com' in href:
-                            if not any(ign in href for ign in ignore_list):
-                                found_result = f"🔗 Aquí tienes el enlace de Netflix:\n\n{href}"
-                                break
-                
-                if found_result:
+                # Buscar código de 4 dígitos exclusivamente para login de 4 dígitos
+                if accion_low in ['login', 'login_4']:
+                    # Primero intentar coincidencia contextual (ej: Código de inicio de sesión: 1234)
+                    ctx_match = re.search(r'(?:c[oó]digo(?:\s+de\s+inicio\s+de\s+sesi[oó]n)?[:\s]+)(\d{4})\b', texto, re.IGNORECASE)
+                    if ctx_match:
+                        codigo = ctx_match.group(1)
+                        found_result = f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{codigo}`"
+                        break
+
+                    matches_4 = re.findall(r'\b\d\s*\d\s*\d\s*\d\b', texto)
+                    anios = ("2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030")
+                    matches_4_clean = [m.replace(" ", "") for m in matches_4 if m.replace(" ", "") not in anios]
+                    if matches_4_clean:
+                        found_result = f"🔑 Aquí tienes el código de inicio de sesión:\n\n`{matches_4_clean[0]}`"
+                        break
+
+                elif matches_6:
+                    codigo = matches_6[0].replace(" ", "")
+                    found_result = f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
                     break
-                    
+
             if found_result:
                 return found_result
             # Fallback a captura SOLO si el texto/enlace no se pudo extraer
@@ -633,15 +764,19 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
                         pass
 
                     # Buscar el enlace de Netflix
-                    ignore_list = ['help.netflix.com', 'TermsOfUse', 'privacy', '/browse', 'netflix.com/es/']
+                    ignore_list = ['help.netflix.com', 'termsofuse', 'privacy', '/browse', 'netflix.com/es/', 'netflix.com/en/', 'codeflix', 'sdnetpanel', 'dashboard']
+                    prefix_link = "🔗 Aquí tienes el enlace de Netflix para tu código de viaje:\n\n" if accion_norm in ('travel', 'hogar_code') else "🏠 Aquí tienes el enlace:\n\n"
                     for href in hrefs:
-                        if 'netflix.com' in href and not any(ign in href for ign in ignore_list):
-                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                        h_low = href.lower()
+                        if 'netflix.com' in h_low and not any(ign in h_low for ign in ignore_list):
+                            return f"{prefix_link}{href}"
                     
-                    # A veces el enlace de viaje/hogar no dice netflix.com explícitamente en href o el href está en un botoncito
+                    # Enlace específico de viaje/hogar
                     for href in hrefs:
-                        if 'update-primary-location' in href or 'travel' in href or 'account' in href:
-                            return f"🏠 Aquí tienes el enlace:\n\n{href}"
+                        h_low = href.lower()
+                        if 'netflix.com' in h_low and ('update-primary-location' in h_low or 'travel' in h_low or 'nftoken' in h_low or 'verify' in h_low):
+                            if not any(ign in h_low for ign in ignore_list):
+                                return f"{prefix_link}{href}"
                 else:
                     # Si no coincide con ninguna acción específica, intentar extraer cualquier código
                     matches = re.findall(r'\b(\d{4,6})\b', texto_correo_valido)
@@ -1078,7 +1213,27 @@ async def get_code_mttmail(email_cliente: str) -> str:
         return "❌ Hubo un error de conexión al buscar en el panel secundario."
 
 async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    email = update.message.text
+    raw_text = (update.message.text or "").strip()
+
+    # Si el usuario quiere reiniciar o cancelar
+    if raw_text.lower() in ['/start', 'start']:
+        return await start(update, context)
+
+    if raw_text.lower() in ['cancelar', 'cancel', 'salir', 'volver', 'inicio', 'menu', '/cancel', '/cancelar']:
+        context.user_data.clear()
+        await update.message.reply_text("Operación cancelada. Escribe /start para comenzar de nuevo.")
+        return ConversationHandler.END
+
+    if not is_valid_email(raw_text):
+        await update.message.reply_text(
+            "⚠️ *Correo no válido*\n\n"
+            "El formato ingresado no corresponde a un correo electrónico.\n"
+            "Por favor, ingresa un correo electrónico correcto (ejemplo: `nombre@ejemplo.com`) o escribe /start para reiniciar:",
+            parse_mode='Markdown'
+        )
+        return TYPING_EMAIL
+
+    email = raw_text
     plataforma = context.user_data.get('plataforma')
     accion = context.user_data.get('accion')
     
@@ -1094,10 +1249,14 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
     # 1. Validación de autorización de acceso en la Web por Telegram ID
     telegram_id = update.effective_user.id
-    auth_check = check_telegram_access(telegram_id, email, plataforma)
+    telegram_user = update.effective_user.username or update.effective_user.first_name or ""
+    auth_check = check_telegram_access(telegram_id, email, plataforma, accion, telegram_user)
     if not auth_check.get("success"):
         error_msg = auth_check.get("message", "⛔ No tienes autorización para solicitar códigos de esta cuenta.")
-        await update.message.reply_text(f"⛔ *Acceso Denegado*\n\n{error_msg}", parse_mode='Markdown')
+        if auth_check.get("es_caida"):
+            await update.message.reply_text(f"❌ {error_msg}")
+        else:
+            await update.message.reply_text(f"⛔ *Acceso Denegado*\n\n{error_msg}", parse_mode='Markdown')
         return ConversationHandler.END
 
     msg = await update.message.reply_text("Buscando tu respuesta en la plataforma, espera unos segundos... ⏳")
@@ -1161,6 +1320,10 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         else:
             resultado = await get_code_royplay(email, plataforma)
     
+    bad_domains = ['sdnetpanel', 'codeflix', 'royplay', 'mttmail', 'localhost', '127.0.0.1']
+    if any(bd in resultado.lower() for bd in bad_domains):
+        resultado = "❌ No se encontró ningún código o enlace reciente de Netflix. Por favor, solicita reenviar el código en tu pantalla o televisor y vuelve a intentar."
+
     if resultado.startswith("SCREENSHOT:"):
         path = resultado.split("SCREENSHOT:")[1]
         try:
@@ -1195,6 +1358,7 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
     await update.message.reply_text("Operación cancelada. Escribe /start para empezar.")
     return ConversationHandler.END
 
@@ -1318,6 +1482,15 @@ def run_web_server():
             job_id = data.get("job_id", "")
             
             laravel_data = fetch_laravel_credentials(email)
+            if laravel_data and laravel_data.get('es_caida'):
+                resultado = f"❌ {laravel_data.get('message', 'Hubo un problema con la cuenta, contacta con el proveedor.')}"
+                callback_url = data.get("callback_url", "https://fstflix.com/api/bot/callback")
+                try:
+                    requests.post(callback_url, json={"job_id": job_id, "resultado": resultado}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=15)
+                except Exception as ex:
+                    print(f"[API Web] Error callback caida: {ex}")
+                return
+
             resultado = "Error: no se encontró configuración en Laravel o fallo en las credenciales."
             
             if laravel_data and laravel_data.get('success'):
@@ -1370,6 +1543,10 @@ def run_web_server():
                     else:
                         resultado = await get_code_royplay(email, plataforma)
             
+            bad_domains = ['sdnetpanel', 'codeflix', 'royplay', 'mttmail', 'localhost', '127.0.0.1']
+            if any(bd in resultado.lower() for bd in bad_domains):
+                resultado = "❌ No se encontró ningún código o enlace reciente de Netflix. Por favor, solicita reenviar el código en tu pantalla o televisor y vuelve a intentar."
+
             # Enviar resultado de vuelta a Laravel
             callback_url = data.get("callback_url", "https://fstflix.com/api/bot/callback")
             try:
@@ -1388,7 +1565,14 @@ def run_web_server():
     async def handle_scrape(request):
         try:
             data = await request.json()
-            print(f"[API Web] Solicitud recibida: {data.get('email')} | {data.get('plataforma')} | {data.get('accion')}")
+            email = (data.get("email") or "").strip()
+            print(f"[API Web] Solicitud recibida: {email} | {data.get('plataforma')} | {data.get('accion')}")
+
+            if not is_valid_email(email):
+                return web.json_response({
+                    "success": False,
+                    "error": "El correo ingresado no tiene un formato válido."
+                }, status=400)
             
             # Lanzar tarea en segundo plano sin bloquear la respuesta HTTP
             asyncio.create_task(background_scrape(data))
@@ -1445,7 +1629,13 @@ def main():
                 CallbackQueryHandler(action_handler, pattern="^back_to_start$")
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("cancelar", cancel),
+            CommandHandler("start", start),
+        ],
+        allow_reentry=True,
+        conversation_timeout=300.0,
     )
     app.add_handler(conv_handler)
     print("Bot con fix de inputs ocultos iniciado...", flush=True)
