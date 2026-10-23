@@ -908,97 +908,146 @@ async def get_code_wsp(email: str) -> str:
         return f"❌ No se pudo conectar con el microservicio de WhatsApp: {e}"
 
 async def get_code_royplay(email: str, plataforma: str) -> str:
+    plat_map = {
+        'disney': 'disney',
+        'prime': 'amazon_code',
+        'amazon': 'amazon_code',
+        'amazon_code': 'amazon_code',
+        'max': 'hbo_max',
+        'hbo': 'hbo_max',
+        'hbo_max': 'hbo_max',
+        'crunchyroll': 'crunchyroll',
+        'paramount': 'paramount',
+        'spotify': 'spotify_code',
+        'spotify_code': 'spotify_code',
+        'vix': 'vix_code',
+        'vix_code': 'vix_code',
+    }
+    target_plat = plat_map.get(plataforma.lower(), 'disney')
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         # Forzar zona horaria de Perú para que el renderizado web y el check coincidan visualmente
         context = await browser.new_context(timezone_id="America/Lima")
         page = await context.new_page()
+
+        captured_json = {}
+        async def on_response(response):
+            if "reseller.royplay.com" in response.url and response.request.method == "POST":
+                try:
+                    data = await response.json()
+                    captured_json.update(data)
+                except Exception:
+                    pass
+        page.on("response", on_response)
+
         try:
-            await page.goto("https://reseller.royplay.com")
-            
-            # Esperamos que cargue el titulo para asegurarnos de que la página renderizó
+            await page.goto("https://reseller.royplay.com", wait_until="networkidle", timeout=30000)
+
+            # Esperamos que cargue el título para asegurarnos de que la página renderizó
             await page.wait_for_selector("text='Gestión de Códigos'", timeout=15000)
-            
-            # Buscamos exclusivamente los inputs que NO sean ocultos (hidden)
-            visible_inputs = page.locator("input:not([type='hidden'])")
-            count = await visible_inputs.count()
-            if count >= 2:
-                await visible_inputs.nth(0).fill(ROYPLAY_CODE)
-                await visible_inputs.nth(1).fill(email)
+
+            # Llenar inputs de acceso y correo (evitando el checkbox de recordarCódigo)
+            if await page.locator("#codigo_acceso").count() > 0:
+                await page.fill("#codigo_acceso", ROYPLAY_CODE)
+                await page.fill("#correo", email)
             else:
-                return "❌ No se encontraron los campos visibles en el sistema."
-                
-            if plataforma == 'disney':
-                await page.locator("select#tipo_codigo").select_option("disney")
-            else:
-                await page.locator("select#tipo_codigo").select_option("amazon_code")
-                
-            await page.locator("button#searchBtn").click(no_wait_after=True)
-            
-            try:
-                # Esperar a que la lista de emails se pueble
-                await page.wait_for_selector("#emailList li", timeout=20000)
-            except:
-                return "❌ No se encontraron códigos recientes para este correo en la base de datos."
-            
-            await page.wait_for_timeout(1000)
-            
-            try:
-                # Clic exacto y seguro en el primer correo
-                await page.locator("#emailList li").first.click()
-            except Exception as e:
-                print("Error click:", e, flush=True)
-                
-            try:
-                # Esperar a que el modal se abra
-                await page.wait_for_selector("#emailModal.open", timeout=5000)
-            except:
-                return "❌ No se pudo abrir el mensaje con el código."
-            
-            modal = page.locator("#emailModal")
-            try:
-                # Extraer la fecha del HTML nativo del modal
-                fecha_text = await page.locator("p:has-text('Fecha')").locator("xpath=following-sibling::p").first.inner_text()
-                is_valid, msg = check_15_mins(fecha_text)
-                if not is_valid:
-                    return msg
-            except Exception as e:
-                print("Error verificando fecha:", e, flush=True)
-                
-            texto_email = ""
-            try:
-                # Extraer el cuerpo del correo desde el div asignado
-                div_contenido = page.locator("p:has-text('Contenido')").locator("xpath=following-sibling::div").first
-                if await div_contenido.count() > 0:
-                    texto_email = await div_contenido.inner_text()
-                    await div_contenido.evaluate("el => el.scrollTop = el.scrollHeight")
+                text_inputs = page.locator("input:not([type='hidden']):not([type='checkbox'])")
+                if await text_inputs.count() >= 2:
+                    await text_inputs.nth(0).fill(ROYPLAY_CODE)
+                    await text_inputs.nth(1).fill(email)
                 else:
-                    texto_email = await modal.inner_text()
-                    
-                await page.wait_for_timeout(1000) 
-                
-                import re
-                match = re.search(r'\b(\d{6})\b', texto_email)
-                if match:
-                    codigo = match.group(1)
-                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
-                    
-            except Exception as e:
-                print("Error extrayendo texto:", e, flush=True)
-            
-            if await modal.count() == 0:
-                modal = page
-                
+                    return "❌ No se encontraron los campos visibles en el sistema."
+
+            # Seleccionar plataforma usando el nuevo menú interactivo
+            await page.evaluate("""(target) => {
+                const opt = document.querySelector(`.platform-option[data-value="${target}"]`);
+                if (opt) {
+                    opt.click();
+                } else {
+                    const sel = document.getElementById('tipo_codigo');
+                    if (sel) {
+                        sel.value = target;
+                        sel.dispatchEvent(new Event('change'));
+                    }
+                }
+            }""", target_plat)
+
+            # Click en el botón de búsqueda
+            await page.click("#searchBtn")
+
+            # Esperar a que la búsqueda inicie y finalice (el botón searchBtn se deshabilita mientras busca)
+            try:
+                await page.wait_for_selector("#searchBtn[disabled]", timeout=5000)
+            except Exception:
+                pass
+
+            try:
+                await page.wait_for_selector("#searchBtn:not([disabled])", timeout=35000)
+            except Exception:
+                return "❌ El proveedor tardó demasiado en responder (Timeout)."
+
+            await page.wait_for_timeout(1000)
+
+            # Verificar si el servidor devolvió un error (caja de error en pantalla)
+            error_box = page.locator("#errorBox")
+            if await error_box.is_visible():
+                err_text_elem = page.locator("#errorText")
+                err_msg = (await err_text_elem.inner_text()).strip() if await err_text_elem.count() > 0 else (await error_box.inner_text()).strip()
+                if "15 min" in err_msg.lower() or "no se encontraron" in err_msg.lower():
+                    return "❌ No se encontraron códigos recientes para este correo en la base de datos (últimos 15 min)."
+                elif err_msg:
+                    return f"❌ {err_msg}"
+
+            # Verificar si el JSON capturado reporta error
+            if captured_json.get("error"):
+                err_msg = captured_json["error"].strip()
+                if "15 min" in err_msg.lower() or "no se encontraron" in err_msg.lower():
+                    return "❌ No se encontraron códigos recientes para este correo en la base de datos (últimos 15 min)."
+                elif err_msg:
+                    return f"❌ {err_msg}"
+
+            # 1. Intentar extraer el código directamente de .caja-codigo (nueva interfaz)
+            caja_codigo = page.locator(".caja-codigo").first
+            if await caja_codigo.count() > 0 and await caja_codigo.is_visible():
+                codigo = await caja_codigo.get_attribute("data-codigo")
+                if not codigo:
+                    codigo = (await caja_codigo.inner_text()).strip()
+                    m = re.search(r'\b(\d{4,8})\b', codigo)
+                    if m:
+                        codigo = m.group(1)
+                if codigo:
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo.strip()}`"
+
+            # 2. Intentar extraer enlace de restablecimiento / acceso (.btn-enlace)
+            btn_enlace = page.locator(".btn-enlace").first
+            if await btn_enlace.count() > 0 and await btn_enlace.is_visible():
+                enlace = await btn_enlace.get_attribute("href")
+                if enlace:
+                    return f"🔗 Aquí tienes el enlace de acceso / restablecimiento:\n\n{enlace}"
+
+            # 3. Fallback: buscar código en el cuerpo del correo capturado vía AJAX
+            emails = captured_json.get("emails", [])
+            if emails and isinstance(emails, list) and len(emails) > 0:
+                primer_email = emails[0]
+                body_html = primer_email.get("body", "")
+                m = re.search(r'\b(\d{6})\b', body_html)
+                if m:
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{m.group(1)}`"
+                m_any = re.search(r'\b(\d{4,8})\b', body_html)
+                if m_any:
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{m_any.group(1)}`"
+
+            # 4. Fallback final: Si no se encontró texto, capturar pantalla para depuración
             path = os.path.join(os.getcwd(), "resultado_royplay.png")
-            await modal.screenshot(path=path)
-            return "❌ No se encontró ningún código. Tiempo de espera agotado o cuenta sin mensajes."
-            
+            await page.screenshot(path=path)
+            return "❌ No se encontraron códigos recientes para este correo en la base de datos."
+
         except Exception as e:
             print(f"Error royplay: {e}", flush=True)
             return f"Hubo un error de conexión con el sistema. Detalle para depuración:\n\n{str(e)}"
         finally:
             await browser.close()
-
 
 
 
