@@ -1195,22 +1195,27 @@ def _get_code_gmail_sync(email_cuenta: str, app_password: str) -> str:
         print(f"Error IMAP Gmail para {email_cuenta}: {e}", flush=True)
         return f"❌ Hubo un error de conexión al leer {email_cuenta}."
 
-async def get_code_mttmail(email_cliente: str) -> str:
+async def get_code_mttmail(email_cliente: str, user: str = None, password: str = None, url: str = None) -> str:
     from playwright.async_api import async_playwright
     import re
+    
+    panel_user = user or "fstflix"
+    panel_pass = password or "@juarez21"
+    panel_url = url or "https://mttmail.net/"
     
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             
-            await page.goto("https://mttmail.net/", timeout=15000)
+            await page.goto(panel_url, timeout=15000)
             
             # Iniciar sesión si lo pide
             if await page.locator("#usuario").count() > 0:
-                await page.locator("#usuario").fill("fstflix")
-                await page.locator("#password").fill("12345678")
+                await page.locator("#usuario").fill(panel_user)
+                await page.locator("#password").fill(panel_pass)
                 await page.locator(".login-submit").click()
+                await page.wait_for_timeout(2000)
                 
             # Esperar a que cargue el buscador
             await page.wait_for_selector("#correo", timeout=10000)
@@ -1233,7 +1238,7 @@ async def get_code_mttmail(email_cliente: str) -> str:
                 codigo = await page.locator("[data-mail-copy-code]").first.get_attribute("data-mail-copy-code")
                 if codigo:
                     await browser.close()
-                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo}`"
+                    return f"🔑 Aquí tienes el código extraído:\n\n`{codigo.strip()}`"
                     
             # Plan B: Si no hay botón, entrar al primer mensaje y usar nuestra lógica de regex
             links = await page.locator("[data-mail-message-link]").count()
@@ -1329,6 +1334,11 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             resultado = await get_code_sdnetpanel(email_low, accion, l_user, l_pass)
         elif modo == 'panel_codeflix':
             resultado = await get_code_codeflix(email, accion, l_user, l_pass)
+        elif modo in ['panel_generico', 'panel_mttmail', 'mttmail']:
+            if l_url and 'royplay' in str(l_url).lower():
+                resultado = await get_code_royplay(email_low, plataforma)
+            else:
+                resultado = await get_code_mttmail(email_low, l_user, l_pass, l_url)
         elif modo == 'imap' and l_pass and ('gmail' in str(l_user).lower() or 'gmail' in email_low):
             base_gmail = email_low.split('+')[0] + '@gmail.com' if ('+' in email_low and email_low.endswith('@gmail.com')) else email_low
             resultado = await get_code_gmail(base_gmail, l_pass)
@@ -1557,6 +1567,11 @@ def run_web_server():
                     resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
                 elif modo == 'panel_codeflix':
                     resultado = await get_code_codeflix(email, accion, l_user, l_pass)
+                elif modo in ['panel_generico', 'panel_mttmail', 'mttmail']:
+                    if l_url and 'royplay' in str(l_url).lower():
+                        resultado = await get_code_royplay(email, plataforma)
+                    else:
+                        resultado = await get_code_mttmail(email, l_user, l_pass, l_url)
                 elif modo == 'imap' and l_pass and ('gmail' in str(l_user).lower() or 'gmail' in email.lower()):
                     base_gmail = email.split('+')[0] + '@gmail.com' if ('+' in email and email.endswith('@gmail.com')) else email
                     resultado = await get_code_gmail(base_gmail, l_pass)
