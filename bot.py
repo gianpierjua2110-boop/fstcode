@@ -870,7 +870,7 @@ async def get_code_wsp(email: str) -> str:
     try:
         url = "http://127.0.0.1:3001/api/wsp/get-code"
         resp = await asyncio.to_thread(
-            lambda: requests.post(url, json={"email": email}, timeout=45)
+            lambda: requests.post(url, json={"email": email}, timeout=60)
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -902,7 +902,7 @@ async def get_code_wsp(email: str) -> str:
             except:
                 return f"❌ Error de comunicación con WhatsApp (HTTP {resp.status_code})"
     except requests.exceptions.Timeout:
-        return "❌ Tiempo de espera agotado (45s). El proveedor no respondió a tiempo."
+        return "❌ Tiempo de espera agotado (60s). El proveedor no respondió a tiempo."
     except Exception as e:
         print(f"Error llamando al microservicio WSP: {e}", flush=True)
         return f"❌ No se pudo conectar con el microservicio de WhatsApp: {e}"
@@ -1392,7 +1392,10 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             pass
         await msg.delete()
     else:
-        await update.message.reply_text(f"✅ ¡Respuesta obtenida!\n\n{resultado}")
+        if resultado.startswith(("❌", "⛔", "⚠️")):
+            await update.message.reply_text(resultado)
+        else:
+            await update.message.reply_text(f"✅ ¡Respuesta obtenida!\n\n{resultado}")
         await msg.delete()
 
     # Registrar solicitud en Laravel para el historial del panel

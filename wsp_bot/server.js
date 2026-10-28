@@ -42,7 +42,7 @@ function extractCodeOrLink(text) {
     if (matchUrl) {
         return {
             tipo: 'link',
-            valor: matchUrl[0].trim()
+            valor: matchUrl[0].trim().replace(/[),.;]+$/, '')
         };
     }
 
@@ -104,13 +104,28 @@ function isFromTargetBot(msg, text) {
         return true;
     }
 
-    // Marcadores característicos del formato del proveedor
     const low = text.toLowerCase();
+
+    // Si coincide con algún correo actualmente en espera, es 100% la respuesta esperada
+    for (const email of pendingRequests.keys()) {
+        if (low.includes(email.toLowerCase())) {
+            return true;
+        }
+    }
+
+    // Marcadores característicos del formato del proveedor o correo de Netflix
     if (low.includes('buscando correo') || 
+        low.includes('ok, buscando') ||
         low.includes('código:') || 
         low.includes('codigo:') || 
         low.includes('pin:') || 
-        low.includes('hubo un error con este correo')) {
+        low.includes('clave:') ||
+        low.includes('email:') ||
+        low.includes('asunto:') ||
+        low.includes('netflix') ||
+        low.includes('hubo un error') ||
+        low.includes('sin resultado') ||
+        low.includes('no se encontr')) {
         return true;
     }
 
@@ -240,9 +255,9 @@ app.post('/api/wsp/get-code', async (req, res) => {
         console.log(`[WSP] Enviando comando: net ${emailNorm}`);
         await sock.sendMessage(TARGET_BOT_JID, { text: `net ${emailNorm}` });
 
-        // Esperar la respuesta (hasta 40 segundos)
+        // Esperar la respuesta (hasta 55 segundos)
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Tiempo de espera agotado (40s) sin respuesta del proveedor.')), 40000)
+            setTimeout(() => reject(new Error('Tiempo de espera agotado (55s) sin respuesta del proveedor.')), 55000)
         );
 
         const responsePromise = new Promise((resolve) => {
