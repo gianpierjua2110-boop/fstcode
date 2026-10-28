@@ -46,9 +46,9 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 2. Coincidencia explícita con CÓDIGO, CODIGO, PIN o CLAVE (permitiendo comillas, backticks, asteriscos, espacios)
-    // Ej: 🔑 PIN: `3096` | 🔐 CÓDIGO: 266561 | CÓDIGO: `123456` | PIN: 7216
-    const matchExplicit = text.match(/(?:C[ÓO]DIGO|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
+    // 2. Coincidencia explícita con CÓDIGO, CODIGO, CODE, PIN, CLAVE o LINK/CODE (permitiendo comillas, backticks, asteriscos, espacios)
+    // Ej: 🔑 PIN: `3096` | 🔐 CÓDIGO: 266561 | LINK/CODE: 123456 | PIN: 7216
+    const matchExplicit = text.match(/(?:LINK\/CODE|C[ÓO]DIGO|CODE|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
     if (matchExplicit) {
         return {
             tipo: 'codigo',
@@ -116,6 +116,8 @@ function isFromTargetBot(msg, text) {
     // Marcadores característicos del formato del proveedor o correo de Netflix
     if (low.includes('buscando correo') || 
         low.includes('ok, buscando') ||
+        low.includes('link/code:') || 
+        low.includes('link:') || 
         low.includes('código:') || 
         low.includes('codigo:') || 
         low.includes('pin:') || 
