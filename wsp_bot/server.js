@@ -15,10 +15,12 @@ let isConnected = false;
 
 // Mapa para gestionar solicitudes en espera: email -> resolve function
 const pendingRequests = new Map();
+// Caché en memoria para reintentos de descifrado de Baileys
+const msgStore = new Map();
 
 function extractMessageText(msg) {
     if (!msg) return '';
-    let m = msg.message || msg;
+    let m = msg.update?.message || msg.message || msg;
     if (m.ephemeralMessage) m = m.ephemeralMessage.message;
     if (m.viewOnceMessage) m = m.viewOnceMessage.message;
     if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
@@ -95,10 +97,11 @@ function extractCodeOrLink(text) {
 }
 
 function isFromTargetBot(msg, text) {
-    if (msg.key?.fromMe) return false;
+    const key = msg.key || msg.update?.key;
+    if (key?.fromMe) return false;
 
-    const remoteJid = msg.key?.remoteJid || '';
-    const participant = msg.key?.participant || '';
+    const remoteJid = key?.remoteJid || '';
+    const participant = key?.participant || '';
 
     if (remoteJid.includes('51924746824') || participant.includes('51924746824')) {
         return true;
@@ -136,7 +139,8 @@ function isFromTargetBot(msg, text) {
 
 function processIncomingMessage(msg) {
     if (!msg) return;
-    if (msg.key?.fromMe) return;
+    const key = msg.key || msg.update?.key;
+    if (key?.fromMe) return;
 
     const text = extractMessageText(msg).trim();
     if (!text) return;
@@ -197,7 +201,10 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Fstflix Code Bot', 'Chrome', '1.0.0']
+        browser: ['Fstflix Code Bot', 'Chrome', '1.0.0'],
+        getMessage: async (key) => {
+            return msgStore.get(key.id) || undefined;
+        }
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -228,6 +235,13 @@ async function connectToWhatsApp() {
     // Escuchar mensajes nuevos
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
+            if (msg.key?.id && msg.message) {
+                msgStore.set(msg.key.id, msg.message);
+                if (msgStore.size > 200) {
+                    const firstKey = msgStore.keys().next().value;
+                    msgStore.delete(firstKey);
+                }
+            }
             processIncomingMessage(msg);
         }
     });
@@ -235,6 +249,9 @@ async function connectToWhatsApp() {
     // Escuchar actualizaciones/descifrado posterior de mensajes
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
+            if (update.key?.id && update.update?.message) {
+                msgStore.set(update.key.id, update.update.message);
+            }
             processIncomingMessage(update);
         }
     });
