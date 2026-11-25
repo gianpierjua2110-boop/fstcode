@@ -138,8 +138,24 @@ function isFromTargetBot(msg, text) {
     return false;
 }
 
-function isZeynOrderMessage(text) {
+const ZEYN_OFFICIAL_NUMBER = '51977788810';
+
+function isZeynOrderMessage(msg, text) {
     if (!text) return false;
+
+    const key = msg?.key || msg?.update?.key;
+    const remoteJid = key?.remoteJid || '';
+    const participant = key?.participant || '';
+    const fromMe = Boolean(key?.fromMe);
+
+    // Solo procesar si proviene exclusivamente del número oficial de Zeyn (+51 977 788 810) o de uno mismo (pruebas)
+    const isFromZeynNumber = remoteJid.includes(ZEYN_OFFICIAL_NUMBER) || 
+                             participant.includes(ZEYN_OFFICIAL_NUMBER) || 
+                             fromMe;
+    if (!isFromZeynNumber) {
+        return false;
+    }
+
     const low = text.toLowerCase();
     const hasOrderMarker = low.includes('nuevo pedido') || 
                            low.includes('pedido renovado') || 
@@ -192,8 +208,8 @@ function processIncomingMessage(msg) {
     console.log(`[WSP MENSAJE ENTRANTE de ${sender}]: ${text.replace(/\r?\n/g, ' ').substring(0, 75)}...`);
 
     // Detectar y procesar automáticamente si es un pedido de Zeyn
-    if (isZeynOrderMessage(text)) {
-        console.log(`[ZEYN] 🔔 ¡Detectado mensaje de Zeyn! Enviando a Laravel...`);
+    if (isZeynOrderMessage(msg, text)) {
+        console.log(`[ZEYN] 🔔 ¡Detectado mensaje de Zeyn desde +51 977 788 810! Enviando a Laravel...`);
         procesarPedidoZeynEnLaravel(text);
         return;
     }
