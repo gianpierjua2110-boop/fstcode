@@ -137,13 +137,57 @@ function isFromTargetBot(msg, text) {
     return false;
 }
 
+function isZeynOrderMessage(text) {
+    if (!text) return false;
+    const low = text.toLowerCase();
+    const hasOrderMarker = low.includes('nuevo pedido') || low.includes('zeyn.digital');
+    const hasDetailMarker = low.includes('perfil asignado') || (low.includes('vendedor:') && low.includes('asiento:'));
+    return hasOrderMarker && hasDetailMarker;
+}
+
+async function procesarPedidoZeynEnLaravel(texto) {
+    const laravelUrl = process.env.LARAVEL_API_URL || 'https://fstflix.com';
+    const botToken = process.env.BOT_API_TOKEN || 'fstflix_super_secret_bot_token_2026';
+
+    try {
+        console.log('[ZEYN] 🔔 Mensaje de pedido Zeyn detectado. Enviando a Laravel...');
+        const response = await fetch(`${laravelUrl}/api/bot/procesar-pedido-zeyn`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${botToken}`
+            },
+            body: JSON.stringify({
+                mensaje: texto,
+                origen: 'whatsapp'
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success) {
+            console.log(`[ZEYN] ✅ Pedido registrado con éxito en Fstflix:\n${data.message}`);
+        } else {
+            console.error(`[ZEYN] ⚠️ Laravel no pudo registrar el pedido:\n${data.message || JSON.stringify(data)}`);
+        }
+    } catch (err) {
+        console.error(`[ZEYN] ❌ Error conectando con Laravel API:`, err.message);
+    }
+}
+
 function processIncomingMessage(msg) {
     if (!msg) return;
     const key = msg.key || msg.update?.key;
-    if (key?.fromMe) return;
 
     const text = extractMessageText(msg).trim();
     if (!text) return;
+
+    // Detectar y procesar automáticamente si es un pedido de Zeyn
+    if (isZeynOrderMessage(text)) {
+        procesarPedidoZeynEnLaravel(text);
+        return;
+    }
+
+    if (key?.fromMe) return;
 
     if (!isFromTargetBot(msg, text)) return;
 

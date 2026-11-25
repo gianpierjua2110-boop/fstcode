@@ -1672,8 +1672,42 @@ def run_web_server():
     finally:
         loop.run_until_complete(runner.cleanup())
 
+async def zeyn_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.effective_message.text or ""
+    low = text.lower()
+    if ("nuevo pedido" in low or "zeyn.digital" in low) and ("perfil asignado" in low or "asiento:" in low):
+        status_msg = await update.message.reply_text("🔄 Procesando pedido de Zeyn...")
+        try:
+            res = requests.post(
+                "https://fstflix.com/api/bot/procesar-pedido-zeyn",
+                json={"mensaje": text, "origen": "telegram"},
+                headers={"Authorization": f"Bearer {BOT_API_TOKEN}"},
+                timeout=20
+            )
+            data = res.json()
+            if res.status_code == 200 and data.get("success"):
+                pin_info = f" (PIN: `{data.get('pin')}`)" if data.get('pin') else ""
+                msg = (
+                    f"✅ *¡Pedido Zeyn Registrado con Éxito!*\n\n"
+                    f"📦 *Pedido:* `#{data.get('pedido_id', 'N/A')}`\n"
+                    f"👤 *Distribuidor:* `{data.get('cliente')}`\n"
+                    f"🔑 *PIN de acceso a códigos:* `{data.get('codigo_acceso')}`\n"
+                    f"📧 *Cuenta:* `{data.get('correo')}`\n"
+                    f"📺 *Perfil:* {data.get('perfil')}{pin_info}\n"
+                    f"📅 *Vence:* {data.get('vence')}\n\n"
+                    f"🌐 El distribuidor ya tiene acceso automático para pedir códigos en `/codigos` usando su PIN."
+                )
+                await status_msg.edit_text(msg, parse_mode="Markdown")
+            else:
+                err_msg = data.get("message", "Error desconocido procesando el pedido.")
+                await status_msg.edit_text(f"❌ *No se pudo registrar el pedido Zeyn:*\n{err_msg}", parse_mode="Markdown")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Error conectando con el servidor: {str(e)}")
+
+
 def main():
     app = Application.builder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)(NUEVO\s+PEDIDO|zeyn\.digital)"), zeyn_order_handler))
     app.add_handler(CommandHandler("mi_id", mi_id))
     app.add_handler(CommandHandler("agregar", agregar_usuario))
     app.add_handler(CommandHandler("quitar", quitar_usuario))
