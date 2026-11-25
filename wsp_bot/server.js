@@ -140,8 +140,14 @@ function isFromTargetBot(msg, text) {
 function isZeynOrderMessage(text) {
     if (!text) return false;
     const low = text.toLowerCase();
-    const hasOrderMarker = low.includes('nuevo pedido') || low.includes('zeyn.digital');
-    const hasDetailMarker = low.includes('perfil asignado') || (low.includes('vendedor:') && low.includes('asiento:'));
+    const hasOrderMarker = low.includes('nuevo pedido') || 
+                           low.includes('pedido renovado') || 
+                           low.includes('zeyn.digital');
+    const hasDetailMarker = low.includes('perfil') || 
+                            low.includes('vence') || 
+                            low.includes('vencimiento') || 
+                            low.includes('asiento:') || 
+                            low.includes('wa.me/');
     return hasOrderMarker && hasDetailMarker;
 }
 

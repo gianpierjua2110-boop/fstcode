@@ -1675,7 +1675,7 @@ def run_web_server():
 async def zeyn_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.effective_message.text or ""
     low = text.lower()
-    if ("nuevo pedido" in low or "zeyn.digital" in low) and ("perfil asignado" in low or "asiento:" in low):
+    if ("nuevo pedido" in low or "pedido renovado" in low or "zeyn.digital" in low) and ("perfil" in low or "asiento:" in low or "wa.me" in low or "vencimiento" in low):
         status_msg = await update.message.reply_text("🔄 Procesando pedido de Zeyn...")
         try:
             res = requests.post(
@@ -1707,7 +1707,7 @@ async def zeyn_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     app = Application.builder().token(TOKEN).connect_timeout(30).read_timeout(30).write_timeout(30).pool_timeout(30).build()
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)(NUEVO\s+PEDIDO|zeyn\.digital)"), zeyn_order_handler))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)(NUEVO\s+PEDIDO|PEDIDO\s+RENOVADO|zeyn\.digital)"), zeyn_order_handler))
     app.add_handler(CommandHandler("mi_id", mi_id))
     app.add_handler(CommandHandler("agregar", agregar_usuario))
     app.add_handler(CommandHandler("quitar", quitar_usuario))
