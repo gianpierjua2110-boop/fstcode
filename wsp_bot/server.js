@@ -25,6 +25,7 @@ function extractMessageText(msg) {
     if (m.viewOnceMessage) m = m.viewOnceMessage.message;
     if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
     if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+    if (m.editedMessage?.message) m = m.editedMessage.message;
 
     return m.conversation || 
            m.extendedTextMessage?.text || 
@@ -187,8 +188,12 @@ function processIncomingMessage(msg) {
     const text = extractMessageText(msg).trim();
     if (!text) return;
 
+    const sender = key?.remoteJid || 'desconocido';
+    console.log(`[WSP MENSAJE ENTRANTE de ${sender}]: ${text.replace(/\r?\n/g, ' ').substring(0, 75)}...`);
+
     // Detectar y procesar automáticamente si es un pedido de Zeyn
     if (isZeynOrderMessage(text)) {
+        console.log(`[ZEYN] 🔔 ¡Detectado mensaje de Zeyn! Enviando a Laravel...`);
         procesarPedidoZeynEnLaravel(text);
         return;
     }
