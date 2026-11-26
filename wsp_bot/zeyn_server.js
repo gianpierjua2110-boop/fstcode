@@ -135,7 +135,6 @@ async function connectToWhatsApp() {
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
         browser: ['Fstflix Zeyn Bot', 'Chrome', '1.0.0'],
         getMessage: async (key) => {
