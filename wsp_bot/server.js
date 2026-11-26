@@ -13,6 +13,12 @@ const TARGET_BOT_JID = '51924746824@s.whatsapp.net';
 let sock = null;
 let isConnected = false;
 
+// Conjunto de JIDs reconocidos de Garu TV (incluye números directos y LIDs)
+const knownGaruJids = new Set([
+    '51924746824@s.whatsapp.net',
+    TARGET_BOT_JID
+]);
+
 // Mapa para gestionar solicitudes en espera: email -> resolve function
 const pendingRequests = new Map();
 // Caché en memoria para reintentos de descifrado de Baileys
@@ -21,14 +27,33 @@ const msgStore = new Map();
 function extractMessageText(msg) {
     if (!msg) return '';
     let m = msg.update?.message || msg.message || msg;
-    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-    if (m.editedMessage?.message) m = m.editedMessage.message;
+
+    // Desempaquetar capas anidadas de Baileys / WhatsApp
+    let depth = 0;
+    while (m && depth < 10) {
+        depth++;
+        if (m.ephemeralMessage?.message) {
+            m = m.ephemeralMessage.message;
+        } else if (m.viewOnceMessage?.message) {
+            m = m.viewOnceMessage.message;
+        } else if (m.viewOnceMessageV2?.message) {
+            m = m.viewOnceMessageV2.message;
+        } else if (m.documentWithCaptionMessage?.message) {
+            m = m.documentWithCaptionMessage.message;
+        } else if (m.editedMessage?.message) {
+            m = m.editedMessage.message;
+        } else {
+            break;
+        }
+    }
+
+    if (!m) return '';
 
     return m.conversation || 
            m.extendedTextMessage?.text || 
+           m.interactiveMessage?.body?.text ||
+           m.interactiveResponseMessage?.body?.text ||
+           m.templateMessage?.hydratedTemplate?.hydratedContentText ||
            m.templateButtonReplyMessage?.selectedDisplayText || 
            m.buttonsResponseMessage?.selectedDisplayText ||
            m.listResponseMessage?.title ||
@@ -40,8 +65,11 @@ function extractMessageText(msg) {
 function extractCodeOrLink(text) {
     if (!text) return null;
 
+    // Limpiar caracteres invisibles de WhatsApp (LTR, RTL, zero-width, non-breaking space)
+    const cleanText = text.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u00A0]/g, ' ').trim();
+
     // 1. Si contiene un enlace (ej. confirmación de hogar, viaje, o inicio de sesión de Netflix)
-    const matchUrl = text.match(/https?:\/\/[^\s<>"`]+/i);
+    const matchUrl = cleanText.match(/https?:\/\/[^\s<>"`]+/i);
     if (matchUrl) {
         return {
             tipo: 'link',
@@ -49,8 +77,17 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 2. Coincidencia explícita con CÓDIGO, CODIGO, CODE, PIN, CLAVE o LINK/CODE
-    const matchExplicit = text.match(/(?:LINK\/CODE|C[ÓO]DIGO|CODE|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
+    // 2. Patrón Disney / Garu TV: "Tu código de acceso para Disney+ es 123456"
+    const matchDisney = cleanText.match(/(?:c[óo]digo|acceso|disney)[^0-9\n\r]*[\r\n\s:]+([0-9]{4,8})/i);
+    if (matchDisney) {
+        return {
+            tipo: 'codigo',
+            valor: matchDisney[1].trim()
+        };
+    }
+
+    // 3. Coincidencia explícita con CÓDIGO, CODIGO, CODE, PIN, CLAVE o LINK/CODE
+    const matchExplicit = cleanText.match(/(?:LINK\/CODE|C[ÓO]DIGO|CODE|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
     if (matchExplicit) {
         return {
             tipo: 'codigo',
@@ -58,8 +95,8 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 3. Coincidencia con emojis de llave o candado seguidos de un número
-    const matchEmoji = text.match(/(?:[🔐🔑])\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/);
+    // 4. Coincidencia con emojis de llave o candado seguidos de un número
+    const matchEmoji = cleanText.match(/(?:[🔐🔑])\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/);
     if (matchEmoji) {
         return {
             tipo: 'codigo',
@@ -67,8 +104,8 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 4. Bloques de 6 dígitos que no sean años (2024..2027)
-    const matches6 = text.match(/\b([0-9]{6})\b/g);
+    // 5. Bloques de 6 dígitos que no sean años (2024..2027)
+    const matches6 = cleanText.match(/\b([0-9]{6})\b/g);
     if (matches6) {
         for (const candidate of matches6) {
             if (!['2024', '2025', '2026', '2027'].includes(candidate.substring(0, 4))) {
@@ -80,16 +117,15 @@ function extractCodeOrLink(text) {
         }
     }
 
-    // 5. Bloques de 4 dígitos que no sean años (2024..2027)
-    const matches4 = text.match(/\b([0-9]{4})\b/g);
-    if (matches4) {
-        for (const candidate of matches4) {
-            if (!['2024', '2025', '2026', '2027'].includes(candidate)) {
-                return {
-                    tipo: 'codigo',
-                    valor: candidate.trim()
-                };
-            }
+    // 6. Bloques de 4 a 8 dígitos en líneas separadas o tras dos puntos
+    const matchLoose = cleanText.match(/(?:^|[\r\n:])\s*([0-9]{4,8})\s*(?:$|[\r\n])/m);
+    if (matchLoose) {
+        const val = matchLoose[1].trim();
+        if (!['2024', '2025', '2026', '2027'].includes(val)) {
+            return {
+                tipo: 'codigo',
+                valor: val
+            };
         }
     }
 
@@ -103,35 +139,51 @@ function isFromTargetBot(msg, text) {
     const remoteJid = key?.remoteJid || '';
     const participant = key?.participant || '';
 
+    // Si coincide con JIDs conocidos de Garu TV
+    if (knownGaruJids.has(remoteJid) || knownGaruJids.has(participant)) {
+        return true;
+    }
+
     if (remoteJid.includes('51924746824') || participant.includes('51924746824')) {
+        if (remoteJid) knownGaruJids.add(remoteJid);
         return true;
     }
 
     const low = text.toLowerCase();
 
-    // Si coincide con algún correo actualmente en espera, es la respuesta esperada
+    // Si coincide con algún correo actualmente en espera
     for (const email of pendingRequests.keys()) {
         if (low.includes(email.toLowerCase())) {
+            if (remoteJid) knownGaruJids.add(remoteJid);
             return true;
         }
     }
 
-    // Marcadores característicos del formato del proveedor o correo de Netflix
+    // Marcadores característicos del formato del proveedor (Garu TV / Netflix / Disney)
     if (low.includes('buscando correo') || 
         low.includes('ok, buscando') ||
-        low.includes('link/code:') || 
-        low.includes('link:') || 
-        low.includes('código:') || 
-        low.includes('codigo:') || 
+        low.includes('link/code') || 
+        low.includes('código') || 
+        low.includes('codigo') || 
+        low.includes('acceso') ||
+        low.includes('disney') ||
+        low.includes('netflix') ||
         low.includes('pin:') || 
         low.includes('clave:') ||
         low.includes('email:') ||
         low.includes('asunto:') ||
-        low.includes('netflix') ||
-        low.includes('disney') ||
         low.includes('hubo un error') ||
         low.includes('sin resultado') ||
         low.includes('no se encontr')) {
+        if (pendingRequests.size > 0 && remoteJid) {
+            knownGaruJids.add(remoteJid);
+        }
+        return true;
+    }
+
+    // Si hay peticiones en espera y el mensaje contiene un código o enlace
+    if (pendingRequests.size > 0 && (extractCodeOrLink(text) || low.includes('error'))) {
+        if (remoteJid) knownGaruJids.add(remoteJid);
         return true;
     }
 
@@ -146,9 +198,16 @@ function processIncomingMessage(msg) {
     const text = extractMessageText(msg).trim();
     if (!text) return;
 
+    const remoteJid = key?.remoteJid || '';
+
+    // Log para depuración cuando hay peticiones en espera
+    if (pendingRequests.size > 0) {
+        console.log(`[WSP INCOMING] De: ${remoteJid} | Msg: ${text.replace(/\r?\n/g, ' ').substring(0, 80)}`);
+    }
+
     if (!isFromTargetBot(msg, text)) return;
 
-    console.log(`[GARU TV RESPUESTA RECIBIDA]:\n${text}`);
+    console.log(`[GARU TV RESPUESTA RECIBIDA de ${remoteJid}]:\n${text}`);
 
     if (text.toLowerCase().includes('buscando correo') || text.toLowerCase().includes('ok, buscando')) {
         console.log('[GARU TV] Búsqueda en proceso (esperando resultado final)...');
@@ -162,35 +221,51 @@ function processIncomingMessage(msg) {
 
     const item = extractCodeOrLink(text);
 
-    for (const [email, resolver] of pendingRequests.entries()) {
-        const matchesEmail = text.toLowerCase().includes(email.toLowerCase());
+    // Intentar resolver la petición
+    let resolved = false;
 
-        if (matchesEmail || pendingRequests.size === 1) {
-            if (item) {
-                console.log(`[GARU TV] ✅ ${item.tipo.toUpperCase()} extraído: ${item.valor} para ${email}`);
-                resolver({
-                    success: true,
-                    tipo: item.tipo,
-                    codigo: item.valor,
-                    raw: text
-                });
-            } else {
-                console.log(`[GARU TV] ⚠️ Respuesta recibida sin código para ${email}`);
-                let errorMsg = text;
-                if (text.toLowerCase().includes('hubo un error con este correo')) {
-                    errorMsg = 'Hubo un error con este correo en el proveedor. Contacta a soporte.';
-                } else if (text.toLowerCase().includes('sin resultado') || text.toLowerCase().includes('no se encontr')) {
-                    errorMsg = 'Sin resultados ni códigos recientes para este correo.';
-                }
-                resolver({
-                    success: false,
-                    error: errorMsg
-                });
-            }
-            pendingRequests.delete(email);
+    // 1. Primero intentar coincidir con el correo exacto
+    for (const [email, resolver] of pendingRequests.entries()) {
+        if (text.toLowerCase().includes(email.toLowerCase())) {
+            resolveRequest(email, resolver, item, text);
+            resolved = true;
             break;
         }
     }
+
+    // 2. Si no viene el correo en el mensaje (ej: Disney+ no incluye el correo), resolver la petición más antigua
+    if (!resolved && pendingRequests.size > 0) {
+        const [firstEmail, firstResolver] = pendingRequests.entries().next().value;
+        console.log(`[GARU TV] Asociando respuesta sin correo a la petición activa: ${firstEmail}`);
+        resolveRequest(firstEmail, firstResolver, item, text);
+    }
+}
+
+function resolveRequest(email, resolver, item, text) {
+    if (item) {
+        console.log(`[GARU TV] ✅ ${item.tipo.toUpperCase()} extraído: ${item.valor} para ${email}`);
+        resolver({
+            success: true,
+            tipo: item.tipo,
+            codigo: item.valor,
+            raw: text
+        });
+    } else {
+        console.log(`[GARU TV] ⚠️ Respuesta recibida sin código para ${email}`);
+        let errorMsg = text;
+        const low = text.toLowerCase();
+        if (low.includes('hubo un error con este correo') || low.includes('hubo un error desconocido')) {
+            errorMsg = 'Hubo un error con este correo en el proveedor Garu TV.';
+        } else if (low.includes('sin resultado') || low.includes('no se encontr')) {
+            errorMsg = 'Sin resultados ni códigos recientes para este correo en Garu TV.';
+        }
+        resolver({
+            success: false,
+            error: errorMsg,
+            raw: text
+        });
+    }
+    pendingRequests.delete(email);
 }
 
 async function connectToWhatsApp() {
@@ -245,13 +320,18 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Escuchar actualizaciones
+    // Escuchar actualizaciones (reintentos de descifrado, mensajes temporales, etc.)
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
-            if (update.key?.id && update.update?.message) {
-                msgStore.set(update.key.id, update.update.message);
+            const rawMsg = update.update?.message || update.message || (update.key?.id ? msgStore.get(update.key.id) : null);
+            if (update.key?.id && rawMsg) {
+                msgStore.set(update.key.id, rawMsg);
             }
-            processIncomingMessage(update);
+            processIncomingMessage({
+                key: update.key,
+                message: rawMsg,
+                update: update.update
+            });
         }
     });
 }
