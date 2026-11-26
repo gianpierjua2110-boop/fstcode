@@ -138,34 +138,43 @@ function isFromTargetBot(msg, text) {
     return false;
 }
 
-const ZEYN_OFFICIAL_NUMBER = '51977788810';
+const ZEYN_OFFICIAL_NUMBER = '977788810';
 
 function isZeynOrderMessage(msg, text) {
     if (!text) return false;
+
+    const low = text.toLowerCase();
+
+    // Marcadores característicos e inconfundibles de un pedido de Zeyn
+    const hasOrderMarker = low.includes('nuevo pedido') || 
+                           low.includes('pedido renovado') || 
+                           low.includes('zeyn.digital');
+
+    const hasDetailMarker = low.includes('perfil') || 
+                            low.includes('asiento:') || 
+                            low.includes('stock restante') || 
+                            low.includes('vencimiento') || 
+                            low.includes('vence:');
+
+    if (!hasOrderMarker || !hasDetailMarker) {
+        return false;
+    }
 
     const key = msg?.key || msg?.update?.key;
     const remoteJid = key?.remoteJid || '';
     const participant = key?.participant || '';
     const fromMe = Boolean(key?.fromMe);
 
-    // Solo procesar si proviene exclusivamente del número oficial de Zeyn (+51 977 788 810) o de uno mismo (pruebas)
+    // Válido si:
+    // 1. Viene del número oficial de Zeyn (+51 977 788 810)
+    // 2. Viene de uno mismo (para pruebas reenviadas)
+    // 3. Contiene el enlace oficial a zeyn.digital (por si WhatsApp entrega el mensaje con identificador LID @lid)
     const isFromZeynNumber = remoteJid.includes(ZEYN_OFFICIAL_NUMBER) || 
                              participant.includes(ZEYN_OFFICIAL_NUMBER) || 
                              fromMe;
-    if (!isFromZeynNumber) {
-        return false;
-    }
+    const hasZeynDomain = low.includes('zeyn.digital');
 
-    const low = text.toLowerCase();
-    const hasOrderMarker = low.includes('nuevo pedido') || 
-                           low.includes('pedido renovado') || 
-                           low.includes('zeyn.digital');
-    const hasDetailMarker = low.includes('perfil') || 
-                            low.includes('vence') || 
-                            low.includes('vencimiento') || 
-                            low.includes('asiento:') || 
-                            low.includes('wa.me/');
-    return hasOrderMarker && hasDetailMarker;
+    return isFromZeynNumber || hasZeynDomain;
 }
 
 async function procesarPedidoZeynEnLaravel(texto) {
