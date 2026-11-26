@@ -104,10 +104,11 @@ async function procesarPedidoZeynEnLaravel(texto) {
         });
 
         const data = await response.json();
+        console.log(`[ZEYN] 📋 Respuesta Laravel (HTTP ${response.status}): ${JSON.stringify(data)}`);
         if (response.ok && data.success) {
-            console.log(`[ZEYN] ✅ Pedido procesado con éxito en Fstflix:\n${data.message}`);
+            console.log(`[ZEYN] ✅ Pedido procesado: ${data.message}`);
         } else {
-            console.error(`[ZEYN] ⚠️ Laravel respondió con error:\n${data.message || JSON.stringify(data)}`);
+            console.error(`[ZEYN] ⚠️ Laravel respondió con error: ${data.message || JSON.stringify(data)}`);
         }
     } catch (err) {
         console.error(`[ZEYN] ❌ Error conectando con Laravel API:`, err.message);
@@ -125,7 +126,10 @@ function processIncomingMessage(msg) {
     console.log(`[ZEYN WSP ENTRANTE de ${sender}]: ${text.replace(/\r?\n/g, ' ').substring(0, 75)}...`);
 
     if (isZeynOrderMessage(msg, text)) {
-        console.log('[ZEYN] 🔔 ¡Detectado pedido de Zeyn! Enviando a Fstflix...');
+        console.log('[ZEYN] 🔔 ¡Detectado pedido de Zeyn! Texto completo:');
+        console.log('--- INICIO TEXTO ---');
+        console.log(text);
+        console.log('--- FIN TEXTO ---');
         procesarPedidoZeynEnLaravel(text);
     }
 }
