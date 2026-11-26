@@ -181,12 +181,18 @@ async function connectToWhatsApp() {
         }
     });
 
+    // Escuchar actualizaciones (reintentos de descifrado posterior tras Bad MAC / prekeys)
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
-            if (update.key?.id && update.update?.message) {
-                msgStore.set(update.key.id, update.update.message);
+            const rawMsg = update.update?.message || update.message || (update.key?.id ? msgStore.get(update.key.id) : null);
+            if (update.key?.id && rawMsg) {
+                msgStore.set(update.key.id, rawMsg);
             }
-            processIncomingMessage(update);
+            processIncomingMessage({
+                key: update.key,
+                message: rawMsg,
+                update: update.update
+            });
         }
     });
 }
