@@ -865,12 +865,12 @@ async def get_code_max_botcodesall(email: str) -> str:
     finally:
         await client.disconnect()
 
-async def get_code_wsp(email: str) -> str:
+async def get_code_wsp(email: str, plataforma: str = "netflix") -> str:
     """Consulta códigos a través del microservicio de WhatsApp."""
     try:
         url = "http://127.0.0.1:3001/api/wsp/get-code"
         resp = await asyncio.to_thread(
-            lambda: requests.post(url, json={"email": email}, timeout=60)
+            lambda: requests.post(url, json={"email": email, "plataforma": plataforma}, timeout=60)
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -880,7 +880,8 @@ async def get_code_wsp(email: str) -> str:
                 if tipo == "link" or codigo.startswith("http://") or codigo.startswith("https://"):
                     return f"🔗 Aquí tienes el enlace de confirmación:\n\n{codigo}"
                 else:
-                    return f"🔑 Aquí tienes el código de Netflix:\n\n`{codigo}`"
+                    plat_nombre = "Disney+" if "dis" in str(plataforma).lower() else "Netflix"
+                    return f"🔑 Aquí tienes el código de {plat_nombre}:\n\n`{codigo}`"
             elif not data.get("success") and data.get("error"):
                 raw_err = str(data.get("error", "")).strip()
                 # Safety net: verificar si contiene un link o código válido adentro
@@ -1329,7 +1330,7 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         l_url = scraping.get('url')
 
         if modo in ['wsp_garu', 'bot_wsp']:
-            resultado = await get_code_wsp(email_low)
+            resultado = await get_code_wsp(email_low, plataforma)
         elif modo == 'panel_sdnet':
             resultado = await get_code_sdnetpanel(email_low, accion, l_user, l_pass)
         elif modo == 'panel_codeflix':
@@ -1362,18 +1363,21 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             resultado = await get_code_max_botcodesall(email_low)
         elif plataforma == 'netflix':
             if email_low in wsp_emails:
-                resultado = await get_code_wsp(email_low)
+                resultado = await get_code_wsp(email_low, plataforma)
             elif email_low in sdnet_emails:
                 resultado = await get_code_sdnetpanel(email_low, accion)
             else:
                 resultado = await get_code_codeflix(email, accion)
         elif plataforma == 'prime':
             resultado = await get_code_royplay(email, plataforma)
-        elif plataforma == 'disney' and email_low in cpanel_accounts:
-            acc = cpanel_accounts[email_low]
-            resultado = await get_code_cpanel_imap(email_low, acc['pass'], acc['server'])
-        elif plataforma == 'disney' and base_email in gmail_passwords:
-            resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
+        elif plataforma == 'disney':
+            if email_low in wsp_emails:
+                resultado = await get_code_wsp(email_low, "disney")
+            elif email_low in cpanel_accounts:
+                acc = cpanel_accounts[email_low]
+                resultado = await get_code_cpanel_imap(email_low, acc['pass'], acc['server'])
+            elif base_email in gmail_passwords:
+                resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
         elif email_low.endswith('@mttplay.net') or email_low.endswith('@mttpe.com'):
             resultado = await get_code_mttmail(email_low)
         else:
@@ -1565,7 +1569,7 @@ def run_web_server():
                 if plataforma in ['max', 'hbo']:
                     resultado = await get_code_max_botcodesall(email)
                 elif modo in ['wsp_garu', 'bot_wsp']:
-                    resultado = await get_code_wsp(email)
+                    resultado = await get_code_wsp(email, plataforma)
                 elif modo == 'panel_sdnet':
                     resultado = await get_code_sdnetpanel(email, accion, l_user, l_pass)
                 elif modo == 'panel_codeflix':
@@ -1594,7 +1598,7 @@ def run_web_server():
                         base_email = email.split('+')[0] + '@gmail.com'
 
                     if email in wsp_emails:
-                        resultado = await get_code_wsp(email)
+                        resultado = await get_code_wsp(email, plataforma)
                     elif base_email in gmail_passwords:
                         resultado = await get_code_gmail(base_email, gmail_passwords[base_email])
                     elif email in cpanel_accounts:

@@ -128,6 +128,7 @@ function isFromTargetBot(msg, text) {
         low.includes('email:') ||
         low.includes('asunto:') ||
         low.includes('netflix') ||
+        low.includes('disney') ||
         low.includes('hubo un error') ||
         low.includes('sin resultado') ||
         low.includes('no se encontr')) {
@@ -257,7 +258,7 @@ async function connectToWhatsApp() {
 
 // Endpoint HTTP para consultar código desde Laravel/Telegram
 app.post('/api/wsp/get-code', async (req, res) => {
-    const { email } = req.body;
+    const { email, plataforma } = req.body;
     if (!email) {
         return res.status(400).json({ success: false, error: 'Falta el correo electrónico' });
     }
@@ -267,10 +268,15 @@ app.post('/api/wsp/get-code', async (req, res) => {
     }
 
     const emailNorm = email.toLowerCase().trim();
+    const platNorm = (plataforma || 'netflix').toLowerCase().trim();
+
+    // Prefijo según la plataforma: 'dis' para Disney, 'net' para Netflix
+    const prefijo = platNorm.includes('dis') ? 'dis' : 'net';
+    const comando = `${prefijo} ${emailNorm}`;
 
     try {
-        console.log(`[GARU TV] Enviando comando: net ${emailNorm}`);
-        await sock.sendMessage(TARGET_BOT_JID, { text: `net ${emailNorm}` });
+        console.log(`[GARU TV] Enviando comando: ${comando}`);
+        await sock.sendMessage(TARGET_BOT_JID, { text: comando });
 
         // Esperar la respuesta (hasta 55 segundos)
         const timeoutPromise = new Promise((_, reject) => 
