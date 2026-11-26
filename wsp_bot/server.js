@@ -9,6 +9,7 @@ app.use(express.json());
 const PORT = 3001;
 // JID del bot de WhatsApp proveedor (Garu TV)
 const TARGET_BOT_JID = '51924746824@s.whatsapp.net';
+const ZEYN_OFFICIAL_NUMBER = '977788810';
 
 let sock = null;
 let isConnected = false;
@@ -190,6 +191,69 @@ function isFromTargetBot(msg, text) {
     return false;
 }
 
+function isZeynOrderMessage(msg, text) {
+    if (!text) return false;
+
+    const low = text.toLowerCase();
+
+    // Marcadores estructurales de pedidos de Zeyn
+    const hasOrderMarker = low.includes('nuevo pedido') || 
+                           low.includes('pedido renovado') || 
+                           low.includes('zeyn.digital');
+
+    const hasDetailMarker = low.includes('perfil') || 
+                            low.includes('asiento:') || 
+                            low.includes('stock restante') || 
+                            low.includes('vencimiento') || 
+                            low.includes('vence:');
+
+    if (!hasOrderMarker || !hasDetailMarker) {
+        return false;
+    }
+
+    const key = msg?.key || msg?.update?.key;
+    const remoteJid = key?.remoteJid || '';
+    const participant = key?.participant || '';
+    const fromMe = Boolean(key?.fromMe);
+
+    // Válido si proviene de Zeyn (+51 977 788 810), de uno mismo para pruebas, o contiene el enlace a zeyn.digital
+    const isFromZeynNumber = remoteJid.includes(ZEYN_OFFICIAL_NUMBER) || 
+                             participant.includes(ZEYN_OFFICIAL_NUMBER) || 
+                             fromMe;
+    const hasZeynDomain = low.includes('zeyn.digital');
+
+    return isFromZeynNumber || hasZeynDomain;
+}
+
+async function procesarPedidoZeynEnLaravel(texto) {
+    const laravelUrl = process.env.LARAVEL_API_URL || 'https://fstflix.com';
+    const botToken = process.env.BOT_API_TOKEN || 'fstflix_super_secret_bot_token_2026';
+
+    try {
+        console.log('[ZEYN] 🔔 Mensaje de pedido Zeyn detectado. Enviando a Laravel...');
+        const response = await fetch(`${laravelUrl}/api/bot/procesar-pedido-zeyn`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${botToken}`
+            },
+            body: JSON.stringify({
+                mensaje: texto,
+                origen: 'whatsapp_server'
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success) {
+            console.log(`[ZEYN] ✅ Pedido procesado con éxito en Fstflix:\n${data.message}`);
+        } else {
+            console.error(`[ZEYN] ⚠️ Laravel respondió con error:\n${data.message || JSON.stringify(data)}`);
+        }
+    } catch (err) {
+        console.error(`[ZEYN] ❌ Error conectando con Laravel API:`, err.message);
+    }
+}
+
 function processIncomingMessage(msg) {
     if (!msg) return;
     const key = msg.key || msg.update?.key;
@@ -205,6 +269,14 @@ function processIncomingMessage(msg) {
         console.log(`[WSP INCOMING] De: ${remoteJid} | Msg: ${text.replace(/\r?\n/g, ' ').substring(0, 80)}`);
     }
 
+    // 1. Detección y procesamiento automático de pedidos de Zeyn
+    if (isZeynOrderMessage(msg, text)) {
+        console.log(`[ZEYN] 🔔 ¡Detectado pedido de Zeyn de ${remoteJid}! Procesando en Laravel...`);
+        procesarPedidoZeynEnLaravel(text);
+        return;
+    }
+
+    // 2. Procesamiento de códigos/enlaces de Garu TV
     if (!isFromTargetBot(msg, text)) return;
 
     console.log(`[GARU TV RESPUESTA RECIBIDA de ${remoteJid}]:\n${text}`);

@@ -16,14 +16,33 @@ const msgStore = new Map();
 function extractMessageText(msg) {
     if (!msg) return '';
     let m = msg.update?.message || msg.message || msg;
-    if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-    if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-    if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-    if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
-    if (m.editedMessage?.message) m = m.editedMessage.message;
+
+    // Desempaquetar capas anidadas de Baileys / WhatsApp
+    let depth = 0;
+    while (m && depth < 10) {
+        depth++;
+        if (m.ephemeralMessage?.message) {
+            m = m.ephemeralMessage.message;
+        } else if (m.viewOnceMessage?.message) {
+            m = m.viewOnceMessage.message;
+        } else if (m.viewOnceMessageV2?.message) {
+            m = m.viewOnceMessageV2.message;
+        } else if (m.documentWithCaptionMessage?.message) {
+            m = m.documentWithCaptionMessage.message;
+        } else if (m.editedMessage?.message) {
+            m = m.editedMessage.message;
+        } else {
+            break;
+        }
+    }
+
+    if (!m) return '';
 
     return m.conversation || 
            m.extendedTextMessage?.text || 
+           m.interactiveMessage?.body?.text ||
+           m.interactiveResponseMessage?.body?.text ||
+           m.templateMessage?.hydratedTemplate?.hydratedContentText ||
            m.templateButtonReplyMessage?.selectedDisplayText || 
            m.buttonsResponseMessage?.selectedDisplayText ||
            m.listResponseMessage?.title ||
