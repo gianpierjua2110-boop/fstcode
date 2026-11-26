@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = 3001;
-// JID del bot de WhatsApp proveedor
+// JID del bot de WhatsApp proveedor (Garu TV)
 const TARGET_BOT_JID = '51924746824@s.whatsapp.net';
 
 let sock = null;
@@ -49,8 +49,7 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 2. Coincidencia explícita con CÓDIGO, CODIGO, CODE, PIN, CLAVE o LINK/CODE (permitiendo comillas, backticks, asteriscos, espacios)
-    // Ej: 🔑 PIN: `3096` | 🔐 CÓDIGO: 266561 | LINK/CODE: 123456 | PIN: 7216
+    // 2. Coincidencia explícita con CÓDIGO, CODIGO, CODE, PIN, CLAVE o LINK/CODE
     const matchExplicit = text.match(/(?:LINK\/CODE|C[ÓO]DIGO|CODE|PIN|CLAVE)\s*[:=-]?\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/i);
     if (matchExplicit) {
         return {
@@ -59,7 +58,7 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 3. Coincidencia con emojis de llave 🔑 o candado 🔐 seguidos de un número
+    // 3. Coincidencia con emojis de llave o candado seguidos de un número
     const matchEmoji = text.match(/(?:[🔐🔑])\s*[`*'"\s]*([0-9]{4,8})[`*'"\s]*/);
     if (matchEmoji) {
         return {
@@ -68,7 +67,7 @@ function extractCodeOrLink(text) {
         };
     }
 
-    // 4. Bloques de 6 dígitos que no sean años (2024, 2025, 2026, 2027)
+    // 4. Bloques de 6 dígitos que no sean años (2024..2027)
     const matches6 = text.match(/\b([0-9]{6})\b/g);
     if (matches6) {
         for (const candidate of matches6) {
@@ -110,7 +109,7 @@ function isFromTargetBot(msg, text) {
 
     const low = text.toLowerCase();
 
-    // Si coincide con algún correo actualmente en espera, es 100% la respuesta esperada
+    // Si coincide con algún correo actualmente en espera, es la respuesta esperada
     for (const email of pendingRequests.keys()) {
         if (low.includes(email.toLowerCase())) {
             return true;
@@ -138,105 +137,25 @@ function isFromTargetBot(msg, text) {
     return false;
 }
 
-const ZEYN_OFFICIAL_NUMBER = '977788810';
-
-function isZeynOrderMessage(msg, text) {
-    if (!text) return false;
-
-    const low = text.toLowerCase();
-
-    // Marcadores característicos e inconfundibles de un pedido de Zeyn
-    const hasOrderMarker = low.includes('nuevo pedido') || 
-                           low.includes('pedido renovado') || 
-                           low.includes('zeyn.digital');
-
-    const hasDetailMarker = low.includes('perfil') || 
-                            low.includes('asiento:') || 
-                            low.includes('stock restante') || 
-                            low.includes('vencimiento') || 
-                            low.includes('vence:');
-
-    if (!hasOrderMarker || !hasDetailMarker) {
-        return false;
-    }
-
-    const key = msg?.key || msg?.update?.key;
-    const remoteJid = key?.remoteJid || '';
-    const participant = key?.participant || '';
-    const fromMe = Boolean(key?.fromMe);
-
-    // Válido si:
-    // 1. Viene del número oficial de Zeyn (+51 977 788 810)
-    // 2. Viene de uno mismo (para pruebas reenviadas)
-    // 3. Contiene el enlace oficial a zeyn.digital (por si WhatsApp entrega el mensaje con identificador LID @lid)
-    const isFromZeynNumber = remoteJid.includes(ZEYN_OFFICIAL_NUMBER) || 
-                             participant.includes(ZEYN_OFFICIAL_NUMBER) || 
-                             fromMe;
-    const hasZeynDomain = low.includes('zeyn.digital');
-
-    return isFromZeynNumber || hasZeynDomain;
-}
-
-async function procesarPedidoZeynEnLaravel(texto) {
-    const laravelUrl = process.env.LARAVEL_API_URL || 'https://fstflix.com';
-    const botToken = process.env.BOT_API_TOKEN || 'fstflix_super_secret_bot_token_2026';
-
-    try {
-        console.log('[ZEYN] 🔔 Mensaje de pedido Zeyn detectado. Enviando a Laravel...');
-        const response = await fetch(`${laravelUrl}/api/bot/procesar-pedido-zeyn`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${botToken}`
-            },
-            body: JSON.stringify({
-                mensaje: texto,
-                origen: 'whatsapp'
-            })
-        });
-
-        const data = await response.json();
-        if (response.ok && data.success) {
-            console.log(`[ZEYN] ✅ Pedido registrado con éxito en Fstflix:\n${data.message}`);
-        } else {
-            console.error(`[ZEYN] ⚠️ Laravel no pudo registrar el pedido:\n${data.message || JSON.stringify(data)}`);
-        }
-    } catch (err) {
-        console.error(`[ZEYN] ❌ Error conectando con Laravel API:`, err.message);
-    }
-}
-
 function processIncomingMessage(msg) {
     if (!msg) return;
     const key = msg.key || msg.update?.key;
+    if (key?.fromMe) return;
 
     const text = extractMessageText(msg).trim();
     if (!text) return;
 
-    const sender = key?.remoteJid || 'desconocido';
-    console.log(`[WSP MENSAJE ENTRANTE de ${sender}]: ${text.replace(/\r?\n/g, ' ').substring(0, 75)}...`);
-
-    // Detectar y procesar automáticamente si es un pedido de Zeyn
-    if (isZeynOrderMessage(msg, text)) {
-        console.log(`[ZEYN] 🔔 ¡Detectado mensaje de Zeyn desde +51 977 788 810! Enviando a Laravel...`);
-        procesarPedidoZeynEnLaravel(text);
-        return;
-    }
-
-    if (key?.fromMe) return;
-
     if (!isFromTargetBot(msg, text)) return;
 
-    console.log(`[WSP RESPUESTA RECIBIDA]:\n${text}`);
+    console.log(`[GARU TV RESPUESTA RECIBIDA]:\n${text}`);
 
-    // Si es el mensaje temporal de búsqueda, ignorarlo
     if (text.toLowerCase().includes('buscando correo') || text.toLowerCase().includes('ok, buscando')) {
-        console.log('[WSP] Notificación de búsqueda en proceso (esperando resultado final)...');
+        console.log('[GARU TV] Búsqueda en proceso (esperando resultado final)...');
         return;
     }
 
     if (pendingRequests.size === 0) {
-        console.log('[WSP] No hay peticiones esperando esta respuesta.');
+        console.log('[GARU TV] No hay peticiones esperando esta respuesta.');
         return;
     }
 
@@ -245,10 +164,9 @@ function processIncomingMessage(msg) {
     for (const [email, resolver] of pendingRequests.entries()) {
         const matchesEmail = text.toLowerCase().includes(email.toLowerCase());
 
-        // Si coincide el email o solo hay una petición pendiente en curso
         if (matchesEmail || pendingRequests.size === 1) {
             if (item) {
-                console.log(`[WSP] ✅ ${item.tipo.toUpperCase()} extraído: ${item.valor} para ${email}`);
+                console.log(`[GARU TV] ✅ ${item.tipo.toUpperCase()} extraído: ${item.valor} para ${email}`);
                 resolver({
                     success: true,
                     tipo: item.tipo,
@@ -256,7 +174,7 @@ function processIncomingMessage(msg) {
                     raw: text
                 });
             } else {
-                console.log(`[WSP] ⚠️ Respuesta recibida sin código para ${email}`);
+                console.log(`[GARU TV] ⚠️ Respuesta recibida sin código para ${email}`);
                 let errorMsg = text;
                 if (text.toLowerCase().includes('hubo un error con este correo')) {
                     errorMsg = 'Hubo un error con este correo en el proveedor. Contacta a soporte.';
@@ -281,7 +199,7 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Fstflix Code Bot', 'Chrome', '1.0.0'],
+        browser: ['Fstflix Garu Bot', 'Chrome', '1.0.0'],
         getMessage: async (key) => {
             return msgStore.get(key.id) || undefined;
         }
@@ -293,21 +211,21 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            console.log("\n=======================================================");
-            console.log("ESCANEÁ ESTE CÓDIGO QR DESDE TU WHATSAPP (+51 974 140 091):");
-            console.log("=======================================================\n");
+            console.log("\n==================================================================");
+            console.log("ESCANEÁ ESTE CÓDIGO QR CON TU WHATSAPP DE GARU TV (+51 974 140 091):");
+            console.log("==================================================================\n");
             qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Conexión con WhatsApp cerrada. Reconectando...', shouldReconnect);
+            console.log('[GARU TV] Conexión cerrada. Reconectando...', shouldReconnect);
             isConnected = false;
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000);
             }
         } else if (connection === 'open') {
-            console.log('✅ ¡WhatsApp Conectado exitosamente como +51 974 140 091!');
+            console.log('✅ ¡WhatsApp de Garu TV Conectado exitosamente (+51 974 140 091)!');
             isConnected = true;
         }
     });
@@ -326,7 +244,7 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Escuchar actualizaciones/descifrado posterior de mensajes
+    // Escuchar actualizaciones
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
             if (update.key?.id && update.update?.message) {
@@ -337,7 +255,7 @@ async function connectToWhatsApp() {
     });
 }
 
-// Endpoint HTTP para consultar código
+// Endpoint HTTP para consultar código desde Laravel/Telegram
 app.post('/api/wsp/get-code', async (req, res) => {
     const { email } = req.body;
     if (!email) {
@@ -345,18 +263,18 @@ app.post('/api/wsp/get-code', async (req, res) => {
     }
 
     if (!isConnected || !sock) {
-        return res.status(503).json({ success: false, error: 'WhatsApp no está conectado aún en el servidor.' });
+        return res.status(503).json({ success: false, error: 'WhatsApp de Garu TV no está conectado en el servidor (+51 974 140 091).' });
     }
 
     const emailNorm = email.toLowerCase().trim();
 
     try {
-        console.log(`[WSP] Enviando comando: net ${emailNorm}`);
+        console.log(`[GARU TV] Enviando comando: net ${emailNorm}`);
         await sock.sendMessage(TARGET_BOT_JID, { text: `net ${emailNorm}` });
 
         // Esperar la respuesta (hasta 55 segundos)
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Tiempo de espera agotado (55s) sin respuesta del proveedor.')), 55000)
+            setTimeout(() => reject(new Error('Tiempo de espera agotado (55s) sin respuesta de Garu TV.')), 55000)
         );
 
         const responsePromise = new Promise((resolve) => {
@@ -373,10 +291,10 @@ app.post('/api/wsp/get-code', async (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-    res.json({ connected: isConnected });
+    res.json({ service: 'garu-tv', connected: isConnected, phone: '+51 974 140 091' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[WSP Server] Escuchando en puerto ${PORT}...`);
+    console.log(`[Garu TV Bot Server] Escuchando en puerto ${PORT}...`);
     connectToWhatsApp();
 });
