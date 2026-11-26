@@ -628,7 +628,7 @@ async def get_code_sdnetpanel(email: str, accion: str, panel_user_param: str = N
             
         except Exception as e:
             print(f"Error SDNetPanel: {e}", flush=True)
-            return f"❌ Hubo un error al buscar en SDNetPanel. Detalle:\n\n{str(e)}"
+            return f"❌ Hubo un error al consultar el código. {str(e)}"
         finally:
             await browser.close()
 
@@ -792,7 +792,7 @@ async def get_code_codeflix(email: str, accion: str, panel_user_param: str = Non
             
         except Exception as e:
             print(f"Error CodeFlix: {e}", flush=True)
-            return f"❌ Hubo un error de conexión con la plataforma CodeFlix. DETALLE TÉCNICO: {str(e)}"
+            return f"❌ Hubo un error de conexión al consultar el código. {str(e)}"
         finally:
             await browser.close()
 
@@ -806,13 +806,13 @@ async def get_code_max_botcodesall(email: str) -> str:
     session_file = os.path.join(os.path.dirname(__file__), "telethon_session")
 
     if not os.path.exists(f"{session_file}.session"):
-        return "❌ Error: La sesión de Telegram para @CODESALL_BOT aún no ha sido autenticada en el servidor (ejecuta auth_telethon.py)."
+        return "❌ El servicio de códigos para Max no está configurado temporalmente."
 
     client = TelegramClient(session_file, api_id, api_hash)
     try:
         await client.connect()
         if not await client.is_user_authorized():
-            return "❌ Error: La sesión de Telethon no está autorizada. Vuelve a ejecutar auth_telethon.py en el servidor."
+            return "❌ El servicio de códigos para Max no está disponible temporalmente."
 
         target_bot = "@CODESALL_BOT"
         # Enviar comando al bot mayorista
@@ -856,12 +856,12 @@ async def get_code_max_botcodesall(email: str) -> str:
                     if match_dig:
                         return f"🔑 Aquí tienes el código de Max:\n\n`{match_dig.group(1)}`"
                     
-                    return f"ℹ️ Respuesta del proveedor:\n\n{texto}"
+                    return f"ℹ️ Respuesta:\n\n{texto}"
 
-        return "❌ Tiempo de espera agotado. @CODESALL_BOT no respondió en los últimos 30 segundos."
+        return "❌ Tiempo de espera agotado. No se recibió respuesta en los últimos 30 segundos."
     except Exception as e:
         print(f"Error consultando @CODESALL_BOT con Telethon: {e}", flush=True)
-        return f"❌ Hubo un error de conexión con el bot mayorista: {str(e)}"
+        return f"❌ Hubo un error de conexión al consultar el código: {str(e)}"
     finally:
         await client.disconnect()
 
@@ -893,7 +893,7 @@ async def get_code_wsp(email: str, plataforma: str = "netflix") -> str:
                     return f"🔑 Aquí tienes el código de Netflix:\n\n`{match_pin.group(1)}`"
                 return f"❌ {raw_err}"
             else:
-                return f"ℹ️ Respuesta del proveedor:\n\n{data.get('raw', 'Sin código')}"
+                return f"ℹ️ Respuesta:\n\n{data.get('raw', 'Sin código')}"
         elif resp.status_code == 503:
             return "❌ El servicio de WhatsApp no está conectado actualmente en el servidor."
         else:
@@ -903,7 +903,7 @@ async def get_code_wsp(email: str, plataforma: str = "netflix") -> str:
             except:
                 return f"❌ Error de comunicación con WhatsApp (HTTP {resp.status_code})"
     except requests.exceptions.Timeout:
-        return "❌ Tiempo de espera agotado (60s). El proveedor no respondió a tiempo."
+        return "❌ Tiempo de espera agotado (60s). No se recibió respuesta a tiempo."
     except Exception as e:
         print(f"Error llamando al microservicio WSP: {e}", flush=True)
         return f"❌ No se pudo conectar con el microservicio de WhatsApp: {e}"
@@ -986,7 +986,7 @@ async def get_code_royplay(email: str, plataforma: str) -> str:
             try:
                 await page.wait_for_selector("#searchBtn:not([disabled])", timeout=35000)
             except Exception:
-                return "❌ El proveedor tardó demasiado en responder (Timeout)."
+                return "❌ El servicio tardó demasiado en responder (Timeout)."
 
             await page.wait_for_timeout(1000)
 
@@ -1549,7 +1549,7 @@ def run_web_server():
             
             laravel_data = fetch_laravel_credentials(email)
             if laravel_data and laravel_data.get('es_caida'):
-                resultado = f"❌ {laravel_data.get('message', 'Hubo un problema con la cuenta, contacta con el proveedor.')}"
+                resultado = f"❌ {laravel_data.get('message', 'Hubo un problema con la cuenta, contacta a soporte.')}"
                 callback_url = data.get("callback_url", "https://fstflix.com/api/bot/callback")
                 try:
                     requests.post(callback_url, json={"job_id": job_id, "resultado": resultado}, headers={"Authorization": f"Bearer {BOT_API_TOKEN}"}, timeout=15)
@@ -1704,7 +1704,7 @@ async def zeyn_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await status_msg.edit_text(msg, parse_mode="Markdown")
             else:
                 err_msg = data.get("message", "Error desconocido procesando el pedido.")
-                await status_msg.edit_text(f"❌ *No se pudo registrar el pedido Zeyn:*\n{err_msg}", parse_mode="Markdown")
+                await status_msg.edit_text(f"❌ *No se pudo registrar el pedido:*\n{err_msg}", parse_mode="Markdown")
         except Exception as e:
             await status_msg.edit_text(f"❌ Error conectando con el servidor: {str(e)}")
 

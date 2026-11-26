@@ -323,13 +323,13 @@ function resolveRequest(email, resolver, item, text) {
             raw: text
         });
     } else {
-        console.log(`[GARU TV] ⚠️ Respuesta recibida sin código para ${email}`);
+        console.log(`[WSP] ⚠️ Respuesta recibida sin código para ${email}`);
         let errorMsg = text;
         const low = text.toLowerCase();
         if (low.includes('hubo un error con este correo') || low.includes('hubo un error desconocido')) {
-            errorMsg = 'Hubo un error con este correo en el proveedor Garu TV.';
+            errorMsg = 'Hubo un error al consultar este correo. Por favor verifica que el correo sea correcto o contacta a soporte.';
         } else if (low.includes('sin resultado') || low.includes('no se encontr')) {
-            errorMsg = 'Sin resultados ni códigos recientes para este correo en Garu TV.';
+            errorMsg = 'Sin resultados ni códigos recientes para este correo. Solicita el código en tu pantalla o app y vuelve a consultar.';
         }
         resolver({
             success: false,
@@ -416,7 +416,7 @@ app.post('/api/wsp/get-code', async (req, res) => {
     }
 
     if (!isConnected || !sock) {
-        return res.status(503).json({ success: false, error: 'WhatsApp de Garu TV no está conectado en el servidor (+51 974 140 091).' });
+        return res.status(503).json({ success: false, error: 'El servicio de WhatsApp no está disponible en este momento.' });
     }
 
     const emailNorm = email.toLowerCase().trim();
@@ -427,12 +427,12 @@ app.post('/api/wsp/get-code', async (req, res) => {
     const comando = `${prefijo} ${emailNorm}`;
 
     try {
-        console.log(`[GARU TV] Enviando comando: ${comando}`);
+        console.log(`[WSP BOT] Enviando comando: ${comando}`);
         await sock.sendMessage(TARGET_BOT_JID, { text: comando });
 
         // Esperar la respuesta (hasta 55 segundos)
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Tiempo de espera agotado (55s) sin respuesta de Garu TV.')), 55000)
+            setTimeout(() => reject(new Error('Tiempo de espera agotado (55s). No se recibió respuesta a tiempo.')), 55000)
         );
 
         const responsePromise = new Promise((resolve) => {
